@@ -9,6 +9,12 @@ dist/
 web-build/
 expo-env.d.ts
 
+# Export check builds (testing artifacts)
+.expo-export-check*/
+
+# npm cache
+.npm-cache/
+
 # Native
 .kotlin/
 *.orig.*
@@ -39,3 +45,10 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Design source files
+App design extracted/
+App design.zip
+
+# AI / Gemini / Claude config
+.claude/

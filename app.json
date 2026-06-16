@@ -1,13 +1,18 @@
 {
   "expo": {
-    "name": "miapp",
-    "slug": "miapp",
+    "name": "RooAlarm",
+    "slug": "rooalarm",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "scheme": "rooalarm",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rooalarm.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "RooAlarm usa la cámara solo para validar misiones de despertar, como hacer una foto del cielo o de un objeto elegido."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -20,6 +25,20 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker",
+      "expo-font",
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-audio",
+      "expo-video",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "RooAlarm usa la cámara solo para validar misiones de despertar."
+        }
+      ]
+    ]
   }
 }
