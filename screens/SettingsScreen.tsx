@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, TextInput, Alert, Linking } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, TextInput, Alert, Linking, Keyboard, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -7,6 +7,7 @@ import { useColors } from '../constants/ThemeContext';
 import { useLanguage, Language } from '../constants/LanguageContext';
 import { languageOptions } from '../constants/i18n';
 import { useAuth } from '../constants/AuthContext';
+import { useOnboarding } from '../constants/OnboardingContext';
 import { useSubscription } from '../constants/SubscriptionContext';
 import { LEGAL_LINKS } from '../constants/LegalLinks';
 import { supabase } from '../lib/supabase';
@@ -22,14 +23,25 @@ import {
   MissionMode,
   normalizeMissionId,
 } from '../constants/missions';
-import { SOUND_ASSETS } from '../constants/sounds';
-import { configurePlaybackAudio, createRooAudioPlayer, RooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
+import { deleteOwnAccount } from '../lib/deleteAccount';
+import { buildSubscriptionSummary } from '../lib/subscriptionSummary';
+import {
+  triggerSimulationNow,
+  openAlarmKitSettings,
+  getAlarmKitStatus,
+  getAlarmRegistry,
+  repairAlarmSchedules,
+} from '../lib/alarmScheduler';
+import * as Notifications from 'expo-notifications';
+import { getAlarmCapability } from '../lib/alarmCapability';
+import { markDailyCompletedToday, resetDailyCompletionToday, fetchUserAlarms } from '../lib/dailyAlarmSupabase';
+import { getDailyAlarm } from '../lib/dailyAlarm';
 
 interface SettingsScreenProps {
   navigation: any;
 }
 
-const USER_SETTINGS_SELECT = 'name, language, default_mission, default_sound, snooze_enabled, protected_days, mission_mode, enabled_missions, personalized_mission';
+const USER_SETTINGS_SELECT = 'name, language, default_mission, snooze_enabled, protected_days, mission_mode, enabled_missions, personalized_mission';
 
 function SettingsRow({
   icon,
@@ -144,7 +156,74 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   const { colors, streak, setStreak, rescueTokens } = useColors();
   const { language, setLanguage, t } = useLanguage();
   const { user, signOut } = useAuth();
-  const { restorePurchases } = useSubscription();
+  const { resetData } = useOnboarding();
+  const {
+    hasPremiumAccess,
+    dbSubscription,
+    configured,
+    customerInfo,
+    isSimulatedPremium,
+    annualPackage,
+    weeklyPackage,
+  } = useSubscription();
+
+  const subscriptionDetail = useMemo(() => {
+    const summary = buildSubscriptionSummary({
+      hasPremiumAccess,
+      isSimulated: isSimulatedPremium,
+      configured,
+      customerInfo,
+      annualPackage,
+      weeklyPackage,
+      dbExpiresAt: dbSubscription?.subscription_expires_at ?? null,
+      dbStatus: dbSubscription?.subscription_status ?? null,
+      dbSubscribedAt: dbSubscription?.subscribed_at ?? null,
+      dbPlan: dbSubscription?.subscription_plan ?? null,
+      labels: {
+        inactive: t('subscriptionScreen.statusInactive'),
+        active: t('subscriptionScreen.statusActive'),
+        trial: t('subscriptionScreen.statusTrial'),
+        annual: t('subscriptionScreen.planAnnual'),
+        weekly: t('subscriptionScreen.planWeekly'),
+        unknownPlan: t('subscriptionScreen.planUnknown'),
+        simulated: t('subscriptionScreen.planSimulated'),
+        devAccess: t('subscriptionScreen.statusDev'),
+      },
+    });
+
+    if (summary.isActive) {
+      if (summary.isTrial) return t('subscriptionScreen.statusTrial');
+      if (summary.planKey === 'annual') return t('subscriptionScreen.planAnnual');
+      if (summary.planKey === 'weekly') return t('subscriptionScreen.planWeekly');
+      return summary.statusLabel;
+    }
+
+    if (dbSubscription?.is_subscribed) {
+      if (dbSubscription.subscription_status === 'trial') return t('subscriptionScreen.statusTrial');
+      if (dbSubscription.subscription_plan === 'annual') return t('subscriptionScreen.planAnnual');
+      if (dbSubscription.subscription_plan === 'weekly') return t('subscriptionScreen.planWeekly');
+      return t('subscriptionScreen.statusActive');
+    }
+
+    return t('subscriptionScreen.statusInactive');
+  }, [
+    annualPackage,
+    configured,
+    customerInfo,
+    dbSubscription,
+    hasPremiumAccess,
+    isSimulatedPremium,
+    t,
+    weeklyPackage,
+  ]);
+
+  const openSubscription = () => {
+    if (hasPremiumAccess) {
+      navigation.navigate('Subscription');
+      return;
+    }
+    navigation.navigate('Paywall');
+  };
   const [snooze, setSnooze] = useState(false);
 
   const [name, setName] = useState('');
@@ -153,11 +232,27 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   const [defMission, setDefMission] = useState(DEFAULT_PERSONALIZED_MISSION);
   const [missionMode, setMissionMode] = useState<MissionMode>('personalized');
   const [enabledMissions, setEnabledMissions] = useState<string[]>(DEFAULT_ENABLED_MISSIONS);
-  const [defSound, setDefSound] = useState('radar_classic');
-  const [audioObj, setAudioObj] = useState<RooAudioPlayer | null>(null);
   const [protectedDays, setProtectedDays] = useState([0, 1, 2, 3, 4]);
 
   const [activePopup, setActivePopup] = useState<'name'|'language'|'streak'|null>(null);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardInset(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardInset(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activePopup) setKeyboardInset(0);
+  }, [activePopup]);
 
   useEffect(() => {
     if (!user) return;
@@ -194,7 +289,6 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
     if (data.mission_mode === 'roulette' || data.mission_mode === 'personalized') setMissionMode(data.mission_mode);
     if (data.personalized_mission || data.default_mission) setDefMission(normalizeMissionId(data.personalized_mission || data.default_mission));
     if (Array.isArray(data.enabled_missions) && data.enabled_missions.length > 0) setEnabledMissions(data.enabled_missions);
-    if (data.default_sound) setDefSound(data.default_sound);
     if (data.snooze_enabled !== null && data.snooze_enabled !== undefined) setSnooze(data.snooze_enabled);
     setProtectedDays(normalizeProtectedDays(data.protected_days, protectedDays));
   };
@@ -251,38 +345,19 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
     updateSetting('enabled_missions', next);
   };
 
-  const playPreview = async (asset: any) => {
-    try {
-      stopRooAudioPlayer(audioObj);
-      await configurePlaybackAudio(false);
-      const sound = createRooAudioPlayer(asset.file, { loop: false, volume: 1.0 });
-      setAudioObj(sound);
-      sound.play();
-    } catch (e) {
-      console.log('Preview error', e);
-    }
+  const closePopup = () => {
+    Keyboard.dismiss();
+    setActivePopup(null);
   };
 
-  const closePopup = () => {
-    setActivePopup(null);
-    if (audioObj) {
-      stopRooAudioPlayer(audioObj);
-      setAudioObj(null);
-    }
-  };
+  const modalBottomPadding = keyboardInset > 0
+    ? keyboardInset + 12
+    : Math.max(insets.bottom, 18) + 34;
 
   const openLegalLink = (url: string) => {
     Linking.openURL(url).catch(() => {
       Alert.alert('No se pudo abrir el enlace', 'Inténtalo de nuevo en unos segundos.');
     });
-  };
-
-  const handleRestorePurchase = async () => {
-    const result = await restorePurchases();
-    Alert.alert(
-      result.success ? t('onboarding.purchaseRestored') : t('purchaseNotFound'),
-      result.success ? t('premiumUpdated') : result.error || t('purchaseAppleIdHint')
-    );
   };
 
   const handleDeleteAccountRequest = () => {
@@ -292,20 +367,20 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
       [
         { text: t('cancel'), style: 'cancel' },
         {
-          text: t('requestDeletion'),
+          text: t('delete'),
           style: 'destructive',
           onPress: async () => {
+            if (!user?.id) return;
             try {
-              const { error } = await supabase.functions.invoke('delete-account', {
-                body: { user_id: user?.id, email: user?.email },
-              });
-              if (error) throw error;
-              await signOut();
+              await deleteOwnAccount(user.id);
+              resetData();
               Alert.alert(t('deletionReceived'), t('deletionReceivedBody'));
-            } catch {
-              const subject = encodeURIComponent('Eliminar cuenta RooAlarm');
-              const body = encodeURIComponent(`Quiero eliminar mi cuenta RooAlarm.\n\nEmail: ${user?.email || ''}\nUser ID: ${user?.id || ''}`);
-              Linking.openURL(`mailto:${LEGAL_LINKS.supportEmail}?subject=${subject}&body=${body}`);
+            } catch (err) {
+              console.log('Delete account failed', err);
+              Alert.alert(
+                t('settingsScreen.deleteAccount'),
+                'No se pudo eliminar la cuenta. Inténtalo de nuevo en unos segundos.'
+              );
             }
           },
         },
@@ -352,8 +427,31 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           icon="lifesaver" 
           title={t('settingsScreen.rescueTokens')}
           detail={rescueTokens.toString()} 
-          last 
         />
+        <SettingsRow
+          icon="sparkle"
+          title={t('settingsScreen.mySubscription')}
+          detail={subscriptionDetail}
+          control={<Icon name="chevR" size={16} color={colors.textFaint} stroke={3} />}
+          onPress={openSubscription}
+          last={hasPremiumAccess}
+        />
+
+        {!hasPremiumAccess && (
+          <View style={[styles.paywallCard, { backgroundColor: colors.surface, borderColor: colors.hairline }]}>
+            <Text style={[styles.paywallTitle, { color: colors.text }]}>{t('settingsScreen.paywallTitle')}</Text>
+            <Text style={[styles.paywallBody, { color: colors.textDim }]}>{t('settingsScreen.paywallBody')}</Text>
+            <SquishyButton
+              color={colors.brandOrange || colors.accSolid}
+              shadowColor="rgba(0,0,0,0.18)"
+              borderRadius={SIZES.rMd}
+              onPress={openSubscription}
+              contentStyle={styles.paywallBtn}
+            >
+              <Text style={styles.paywallBtnText}>{t('onboarding.subscribe')}</Text>
+            </SquishyButton>
+          </View>
+        )}
 
         {/* GENERAL & WAKE-UP */}
         <View style={styles.pad}>
@@ -399,44 +497,155 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           title={t('settingsScreen.privacy')}
           control={<Icon name="chevR" size={16} color={colors.textFaint} />}
           onPress={() => openLegalLink(LEGAL_LINKS.privacy)}
-        />
-        <SettingsRow
-          icon="repeat"
-          title={t('settingsScreen.restorePurchase')}
-          control={<Icon name="chevR" size={16} color={colors.textFaint} />}
-          onPress={handleRestorePurchase}
           last
         />
 
         {/* DEVELOPER */}
-        <View style={styles.pad}>
-          <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>{t('settingsScreen.developer')}</Text>
-        </View>
-        <SettingsRow
-          icon="edit"
-          title={t('settingsScreen.editStreak')}
-          detail={streak.toString()}
-          control={<Icon name="chevR" size={16} color={colors.textFaint} />}
-          onPress={() => { setTempStreak(streak.toString()); setActivePopup('streak'); }}
-        />
+        {__DEV__ && (
+          <>
+            <View style={styles.pad}>
+              <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>{t('settingsScreen.developer')}</Text>
+            </View>
+            <SettingsRow
+              icon="edit"
+              title={t('settingsScreen.editStreak')}
+              detail={streak.toString()}
+              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
+              onPress={() => { setTempStreak(streak.toString()); setActivePopup('streak'); }}
+            />
+            <SettingsRow
+              icon="info"
+              title="Diagnóstico alarmas"
+              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
+              onPress={async () => {
+                const [capability, status, registry] = await Promise.all([
+                  getAlarmCapability(),
+                  getAlarmKitStatus(),
+                  getAlarmRegistry(),
+                ]);
+                const scheduled = Object.entries(registry)
+                  .map(([id, entry]) => {
+                    const mode = entry.usesAlarmKit ? 'AlarmKit' : `notif×${entry.notificationIds?.length ?? (entry.notificationId ? 1 : 0)}`;
+                    return `${id}: ${mode}`;
+                  })
+                  .join('\n') || '(ninguna en registro local)';
+                const pending = await Notifications.getAllScheduledNotificationsAsync();
+                const rooPending = pending.filter(
+                  (n) => n.content.data?.source === 'rooalarm' || n.content.data?.alarmId != null
+                ).length;
+                Alert.alert(
+                  'Diagnóstico alarmas',
+                  `Modo: ${capability.capability}\n` +
+                    `AlarmKit: ${status.available ? 'sí' : 'no'} (${status.authorization})\n` +
+                    `Notificaciones: ${capability.notificationsGranted ? 'sí' : 'no'}\n` +
+                    `Pendientes iOS: ${rooPending}\n\n` +
+                    `Registro local:\n${scheduled}`
+                );
+              }}
+            />
+            <SettingsRow
+              icon="refresh"
+              title="Reparar alarmas"
+              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
+              onPress={async () => {
+                if (!user) return;
+                try {
+                  const alarms = await fetchUserAlarms(user.id);
+                  const results = await repairAlarmSchedules(alarms, protectedDays);
+                  const activeAlarms = alarms.filter((a) => a.on);
+                  const summary = results.length
+                    ? results
+                        .map((r, i) => `${activeAlarms[i]?.id ?? '?'}: ${r.ok ? r.mode : r.reason}`)
+                        .join('\n')
+                    : 'Sin alarmas activas';
+                  Alert.alert('Reparar alarmas', summary);
+                } catch (err) {
+                  console.log('repairAlarmSchedules failed', err);
+                  Alert.alert('Roo Alarm', 'No se pudieron reprogramar las alarmas.');
+                }
+              }}
+            />
+            <SettingsRow
+              icon="refresh"
+              title={t('settingsScreen.resetDailyToday')}
+              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
+              onPress={async () => {
+                if (!user) return;
+                try {
+                  await resetDailyCompletionToday(user.id, protectedDays);
+                  Alert.alert('Roo Alarm', 'Daily de hoy reiniciada.');
+                } catch (err) {
+                  console.log('resetDailyCompletionToday failed', err);
+                  Alert.alert('Roo Alarm', 'No se pudo reiniciar la daily.');
+                }
+              }}
+            />
+            <SettingsRow
+              icon="check"
+              title={t('settingsScreen.markDailyCompletedToday')}
+              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
+              onPress={async () => {
+                if (!user) return;
+                try {
+                  const alarms = await fetchUserAlarms(user.id);
+                  const daily = getDailyAlarm(alarms);
+                  if (!daily) {
+                    Alert.alert('Roo Alarm', 'No hay daily alarm.');
+                    return;
+                  }
+                  await markDailyCompletedToday(user.id, daily.id);
+                  Alert.alert('Roo Alarm', 'Daily marcada como completada hoy.');
+                } catch (err) {
+                  console.log('markDailyCompletedToday failed', err);
+                  Alert.alert('Roo Alarm', 'No se pudo marcar la daily.');
+                }
+              }}
+            />
         <SettingsRow
           icon="play"
           title={t('settingsScreen.simulateAlarm')}
           control={<Icon name="chevR" size={16} color={colors.textFaint} />}
-          onPress={() => {
-            const d = new Date();
-            let h = d.getHours();
-            const m = d.getMinutes().toString().padStart(2, '0');
-            const ampm = h >= 12 ? 'PM' : 'AM';
-            h = h % 12;
-            if (h === 0) h = 12;
-            navigation.navigate('AlarmUnlock', { 
-              isDaily: false, 
-              alarm: { time: `${h}:${m}`, ampm, mission: defMission, label: t('settingsScreen.testAlarm') } 
-            });
+          onPress={async () => {
+            const result = await triggerSimulationNow();
+            if (result.mode === 'alarmkit') {
+              Alert.alert(
+                'Roo Alarm',
+                'La alarma del sistema sonará en 1 segundo. Pulsa Desbloquear en la pantalla de Apple; la app abrirá tu misión.'
+              );
+              return;
+            }
+            if (result.mode === 'notification') {
+              Alert.alert(
+                'Roo Alarm',
+                'Modo notificación (iOS < 26). Sonará en 1 segundo; ábrela para ir directo a la misión.'
+              );
+              return;
+            }
+            const capability = await getAlarmCapability();
+            if (result.reason === 'denied') {
+              Alert.alert(
+                'Permiso de alarmas necesario',
+                capability.capability === 'alarmkit'
+                  ? 'Activa las alarmas de Roo Alarm en Ajustes del sistema.'
+                  : 'Activa las notificaciones de Roo Alarm en Ajustes.',
+                [
+                  { text: 'Cancelar', style: 'cancel' },
+                  { text: 'Abrir Ajustes', onPress: openAlarmKitSettings },
+                ]
+              );
+              return;
+            }
+            Alert.alert(
+              'Roo Alarm',
+              capability.capability === 'alarmkit'
+                ? 'No se pudo programar la alarma. En Ajustes → RooAlarm activa Alarmas. Luego usa Reparar alarmas (modo dev).'
+                : 'Activa notificaciones o usa un iPhone con iOS 26+ para AlarmKit del sistema.'
+            );
           }}
           last
         />
+          </>
+        )}
 
         {/* DANGER ZONE */}
         <View style={[styles.pad, { marginTop: 24 }]}>
@@ -462,7 +671,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closePopup} />
           
-          <View style={[styles.modalContent, { backgroundColor: colors.bg, borderColor: colors.hairline, paddingBottom: Math.max(insets.bottom, 18) + 34 }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.bg, borderColor: colors.hairline, paddingBottom: modalBottomPadding }]}>
             <View style={styles.modalHandle} />
             
             {activePopup === 'name' && (
@@ -576,4 +785,35 @@ const styles = StyleSheet.create({
   emojiText: { fontSize: 24, lineHeight: 30 },
   deleteAccountBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 18 },
   deleteAccountText: { fontSize: 14, fontFamily: FONT_FAMILY.bold, textDecorationLine: 'underline' },
+  paywallCard: {
+    marginHorizontal: SIZES.pad,
+    marginBottom: 12,
+    borderRadius: SIZES.rLg,
+    borderWidth: 1,
+    borderBottomWidth: 6,
+    borderColor: 'rgba(0,0,0,0.05)',
+    padding: 20,
+  },
+  paywallTitle: {
+    fontSize: 20,
+    fontFamily: FONT_FAMILY.black,
+    letterSpacing: -0.3,
+    marginBottom: 8,
+  },
+  paywallBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: FONT_FAMILY.semiBold,
+    marginBottom: 16,
+  },
+  paywallBtn: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paywallBtnText: {
+    color: '#fff',
+    fontSize: 17,
+    fontFamily: FONT_FAMILY.bold,
+  },
 });

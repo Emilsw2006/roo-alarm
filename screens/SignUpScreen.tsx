@@ -2,8 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { RouteProp, useRoute } from '@react-navigation/native';
 import { useAuth } from '../constants/AuthContext';
+import { useSubscription } from '../constants/SubscriptionContext';
 import { useLanguage } from '../constants/LanguageContext';
+import { requestAuthNavigationRefresh } from '../lib/authNavigationRefresh';
+import { resolvePostAuthDestination } from '../lib/onboardingNavigation';
+import { AuthStackParamList } from '../navigation/AppNavigator';
 import { FONT, SIZES } from '../constants/theme';
 import Icon from '../components/Icon';
 import { AppleIcon, GoogleIcon } from '../components/BrandIcons';
@@ -14,8 +19,12 @@ interface SignUpScreenProps {
 
 export default function SignUpScreen({ navigation }: SignUpScreenProps) {
   const insets = useSafeAreaInsets();
-  const { signUp, signInWithGoogle, signInWithApple } = useAuth();
+  const route = useRoute<RouteProp<AuthStackParamList, 'SignUp'>>();
+  const fromOnboarding = !!route.params?.fromOnboarding;
+  const { session, signUp, signInWithGoogle, signInWithApple } = useAuth();
+  const { hasPremiumAccess, refreshCustomerInfo } = useSubscription();
   const { t } = useLanguage();
+  const oauthRedirected = useRef(false);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -35,6 +44,32 @@ export default function SignUpScreen({ navigation }: SignUpScreenProps) {
       useNativeDriver: false,
     }).start();
   }, [showEmail]);
+
+  const goToOnboardingStep = async (userId: string) => {
+    await refreshCustomerInfo();
+    requestAuthNavigationRefresh();
+
+    const step = await resolvePostAuthDestination(userId, {
+      hasPremium: hasPremiumAccess,
+      fromOnboarding,
+    });
+
+    if (step === 'main') {
+      requestAuthNavigationRefresh();
+      return;
+    }
+
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Onboarding', params: { initialStep: step } }],
+    });
+  };
+
+  useEffect(() => {
+    if (!session?.user?.id || oauthRedirected.current) return;
+    oauthRedirected.current = true;
+    goToOnboardingStep(session.user.id);
+  }, [session?.user?.id]);
 
   const handleSignUp = async () => {
     setError(null);
@@ -57,7 +92,7 @@ export default function SignUpScreen({ navigation }: SignUpScreenProps) {
     setLoading(true);
     const { error: err } = await signUp(email.trim(), password, name.trim());
     if (err) setError(err);
-    else navigation.navigate('Login');
+    else navigation.navigate('Login', { fromOnboarding });
     setLoading(false);
   };
 
@@ -177,7 +212,7 @@ export default function SignUpScreen({ navigation }: SignUpScreenProps) {
               </View>
             </Animated.View>
 
-            <TouchableOpacity style={styles.switchBtn} onPress={() => navigation.replace('Login')} activeOpacity={0.75}>
+            <TouchableOpacity style={styles.switchBtn} onPress={() => navigation.replace('Login', { existingAccount: true })} activeOpacity={0.75}>
               <Text style={styles.switchText}>
                 {t('auth.alreadyAccount')} <Text style={styles.switchStrong}>{t('auth.signIn')}</Text>
               </Text>

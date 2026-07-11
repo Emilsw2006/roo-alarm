@@ -1,12 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions, Switch, TextInput, Image, Platform, ScrollView, Easing, ActivityIndicator, Linking } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions, Switch, TextInput, Image, Platform, ScrollView, Easing, ActivityIndicator, Linking, Pressable } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useColors } from '../../constants/ThemeContext';
-import { FONT } from '../../constants/theme';
+import { FONT, FONT_FAMILY, SIZES } from '../../constants/theme';
 import { useOnboarding } from '../../constants/OnboardingContext';
-import { SOUND_ASSETS, SOUND_CATEGORIES } from '../../constants/sounds';
-import { LinearGradient } from 'expo-linear-gradient';
-import SoundWave from '../../components/SoundWave';
 import SquishyButton from '../../components/SquishyButton';
 import Icon from '../../components/Icon';
 import CustomTimePicker from '../../components/CustomTimePicker';
@@ -16,14 +13,20 @@ import MissionGlyph from '../../components/MissionGlyph';
 import * as Haptics from 'expo-haptics';
 import SignaturePad from '../../components/SignaturePad';
 import ParticleExplosion from '../../components/ParticleExplosion';
+import { applyOnboardingSetup } from '../../lib/persistOnboarding';
+import { requestAuthNavigationRefresh } from '../../lib/authNavigationRefresh';
+import { hasUserProfileName } from '../../lib/onboardingStatus';
 import { supabase } from '../../lib/supabase';
-import { configurePlaybackAudio, createRooAudioPlayer, RooAudioPlayer, stopRooAudioPlayer } from '../../lib/audioPlayer';
 import { ROO_ASSETS } from '../../constants/RooAssets';
 import { useAuth } from '../../constants/AuthContext';
 import { useSubscription } from '../../constants/SubscriptionContext';
 import { LEGAL_LINKS } from '../../constants/LegalLinks';
 import { AppleIcon, GoogleIcon } from '../../components/BrandIcons';
 import { useLanguage } from '../../constants/LanguageContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { formatGoalWakeTime, getMonthlyHoursSaved } from '../../lib/onboardingGoalSummary';
+import { isAnnualTrialPurchase, resolveAnnualPlanSubtitle, resolveAnnualPriceString } from '../../lib/subscriptionPricing';
+import { PurchasesPackage } from 'react-native-purchases';
 
 // Componente de botón de opción (estilo Duolingo)
 export const OptionButton = ({ label, selected, onPress }: { label: string; selected?: boolean; onPress: () => void }) => {
@@ -100,13 +103,36 @@ const DelayedContinueButton = ({
   contentStyle?: any;
 }) => {
   const { t } = useLanguage();
+  const { colors } = useColors();
   const [ready, setReady] = useState(false);
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const pressAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     setReady(false);
+    progressAnim.setValue(0);
+    const fillAnim = Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: delayMs,
+      easing: Easing.linear,
+      useNativeDriver: false,
+    });
+    fillAnim.start();
     const timer = setTimeout(() => setReady(true), delayMs);
-    return () => clearTimeout(timer);
-  }, [delayMs]);
+    return () => {
+      fillAnim.stop();
+      clearTimeout(timer);
+    };
+  }, [delayMs, progressAnim]);
+
+  const handlePressIn = () => {
+    if (!ready) return;
+    Animated.spring(pressAnim, { toValue: 1, useNativeDriver: true, speed: 50, bounciness: 10 }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(pressAnim, { toValue: 0, useNativeDriver: true, speed: 30, bounciness: 12 }).start();
+  };
 
   const handlePress = () => {
     if (!ready) {
@@ -117,18 +143,457 @@ const DelayedContinueButton = ({
     onPress();
   };
 
+  const fillWidth = progressAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%'],
+  });
+
+  const translateY = pressAnim.interpolate({ inputRange: [0, 1], outputRange: [0, ready ? 6 : 4] });
+  const scale = pressAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.96] });
+  const borderRadius = SIZES.rXl;
+
   return (
-    <SquishyButton
-      color={ready ? color : '#F0EDE7'}
-      shadowColor={ready ? shadowColor : '#E0DCD4'}
-      shadowDepth={ready ? 6 : 4}
-      onPress={handlePress}
-      contentStyle={contentStyle}
-    >
-      <Text style={[styles.btnText, { color: ready ? textColor : '#B7B0A7' }]}>{label || t('onboarding.continue')}</Text>
-    </SquishyButton>
+    <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut} onPress={handlePress} style={{ alignSelf: 'stretch' }}>
+      <Animated.View
+        style={[
+          {
+            overflow: 'hidden',
+            backgroundColor: ready ? color : colors.surface2,
+            borderRadius,
+            borderBottomWidth: ready ? 6 : 4,
+            borderBottomColor: ready ? shadowColor : colors.hairline2,
+            borderLeftWidth: 1,
+            borderRightWidth: 1,
+            borderTopWidth: 1,
+            borderColor: ready ? shadowColor : colors.hairline2,
+            transform: [{ scale }, { translateY }],
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '100%',
+          },
+          contentStyle,
+        ]}
+      >
+        {!ready ? (
+          <Animated.View
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: fillWidth,
+              backgroundColor: color,
+            }}
+          />
+        ) : null}
+        <Text style={[styles.btnText, { color: ready ? textColor : colors.textFaint, zIndex: 1 }]}>
+          {label || t('onboarding.continue')}
+        </Text>
+      </Animated.View>
+    </Pressable>
   );
 };
+
+const READING_TITLE_FONT_SIZE = 30;
+const READING_TITLE_LINE_HEIGHT = 38;
+const READING_BODY_FONT_SIZE = 19;
+const READING_BODY_LINE_HEIGHT = 28;
+const READING_CHAR_DELAY_MS = 34;
+const READING_END_HOLD_MS = 900;
+
+function ReadingPhraseScreen({
+  icon,
+  title,
+  body,
+  onNext,
+  buttonColor,
+  buttonTextColor,
+  buttonShadowColor,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  body: string;
+  onNext: () => void;
+  buttonColor: string;
+  buttonTextColor: string;
+  buttonShadowColor: string;
+}) {
+  const { colors } = useColors();
+  const fullText = title + body;
+  const totalLength = fullText.length;
+  const [visibleCount, setVisibleCount] = useState(0);
+
+  useEffect(() => {
+    setVisibleCount(0);
+    if (!totalLength) return;
+
+    let current = 0;
+    const interval = setInterval(() => {
+      current += 1;
+      setVisibleCount(current);
+      const char = fullText[current - 1];
+      if (char === ' ' || char === '.' || char === ',') {
+        Haptics.selectionAsync();
+      }
+      if (current >= totalLength) clearInterval(interval);
+    }, READING_CHAR_DELAY_MS);
+
+    return () => clearInterval(interval);
+  }, [totalLength, fullText]);
+
+  const titleVisible = title.slice(0, Math.min(visibleCount, title.length));
+  const bodyVisible = body.slice(0, Math.max(0, visibleCount - title.length));
+
+  const titleStyle = {
+    fontSize: READING_TITLE_FONT_SIZE,
+    lineHeight: READING_TITLE_LINE_HEIGHT,
+    color: colors.text,
+    textAlign: 'center' as const,
+    fontFamily: FONT_FAMILY.extraBold,
+    fontWeight: FONT.bold,
+    letterSpacing: -0.4,
+  };
+
+  const bodyStyle = {
+    fontSize: READING_BODY_FONT_SIZE,
+    lineHeight: READING_BODY_LINE_HEIGHT,
+    color: colors.textDim,
+    textAlign: 'center' as const,
+    fontFamily: FONT_FAMILY.medium,
+    fontWeight: FONT.medium,
+    paddingHorizontal: 8,
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.readingPhraseBody}>
+        <View style={styles.readingPhraseIcon}>{icon}</View>
+
+        {/* Reserva el espacio del título completo para evitar saltos */}
+        <View style={{ width: '100%' }}>
+          <Text style={[titleStyle, { opacity: 0 }]}>{title}</Text>
+          <Text style={[titleStyle, { position: 'absolute', left: 0, right: 0, top: 0 }]}>
+            {titleVisible}
+          </Text>
+        </View>
+
+        <View style={{ width: '100%', marginTop: 18 }}>
+          <Text style={[bodyStyle, { opacity: 0 }]}>{body}</Text>
+          <Text style={[bodyStyle, { position: 'absolute', left: 0, right: 0, top: 0 }]}>
+            {bodyVisible}
+          </Text>
+        </View>
+      </View>
+
+      <DelayedContinueButton
+        color={buttonColor}
+        textColor={buttonTextColor}
+        shadowColor={buttonShadowColor}
+        onPress={onNext}
+        delayMs={totalLength * READING_CHAR_DELAY_MS + READING_END_HOLD_MS}
+        contentStyle={{ paddingVertical: 14 }}
+      />
+    </View>
+  );
+}
+
+function paywallAccent(colors: ReturnType<typeof useColors>['colors']) {
+  return colors.brandOrange || colors.accSolid;
+}
+
+function paywallButtonShadow(colors: ReturnType<typeof useColors>['colors']) {
+  return colors.accGlow || colors.hairline2;
+}
+
+function PaywallTrialTimeline({
+  colors,
+  t,
+}: {
+  colors: ReturnType<typeof useColors>['colors'];
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  const accent = paywallAccent(colors);
+  const steps = [
+    {
+      icon: 'lock' as const,
+      title: t('onboarding.timelineToday'),
+      body: t('onboarding.todayUnlock'),
+    },
+    {
+      icon: 'bell' as const,
+      title: t('onboarding.timelineIn2Days'),
+      body: t('onboarding.timelineIn2DaysBody'),
+    },
+  ];
+
+  return (
+    <View style={{ width: '100%', maxWidth: 320, alignSelf: 'center', paddingHorizontal: 4 }}>
+      {steps.map((step, index) => {
+        const isLast = index === steps.length - 1;
+        return (
+          <View key={step.title} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <View style={{ alignItems: 'center', width: 44, marginRight: 12 }}>
+              <View
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  backgroundColor: accent,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Icon name={step.icon} size={19} color={colors.surface3} variant="solid" />
+              </View>
+              {!isLast ? (
+                <View
+                  style={{
+                    width: 5,
+                    flex: 1,
+                    minHeight: 54,
+                    backgroundColor: accent,
+                    opacity: 0.28,
+                    borderRadius: 3,
+                    marginTop: 6,
+                    marginBottom: 2,
+                  }}
+                />
+              ) : null}
+            </View>
+            <View style={{ flex: 1, paddingTop: 8, paddingBottom: isLast ? 6 : 24, paddingRight: 4 }}>
+              <Text style={{ fontSize: 17, lineHeight: 22, fontWeight: '700', color: colors.text, textAlign: 'left' }}>{step.title}</Text>
+              <Text style={{ fontSize: 14, lineHeight: 20, color: colors.textDim, marginTop: 4, fontWeight: '500', textAlign: 'left' }}>{step.body}</Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function PaywallLegalRow({
+  colors,
+  busy,
+  onRestore,
+  onPrivacy,
+  onTerms,
+  restoreLabel,
+  privacyLabel,
+  termsLabel,
+}: {
+  colors: ReturnType<typeof useColors>['colors'];
+  busy: boolean;
+  onRestore: () => void;
+  onPrivacy: () => void;
+  onTerms: () => void;
+  restoreLabel: string;
+  privacyLabel: string;
+  termsLabel: string;
+}) {
+  const linkStyle = { fontSize: 10, lineHeight: 13, fontWeight: '600' as const, color: colors.textDim, textDecorationLine: 'underline' as const };
+  const dotStyle = { fontSize: 10, lineHeight: 13, color: colors.textFaint };
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, gap: 8, flexWrap: 'wrap', alignSelf: 'center' }}>
+      <TouchableOpacity onPress={onRestore} activeOpacity={0.72} disabled={busy}>
+        <Text style={linkStyle}>{restoreLabel}</Text>
+      </TouchableOpacity>
+      <Text style={dotStyle}>·</Text>
+      <TouchableOpacity onPress={onPrivacy} activeOpacity={0.72}>
+        <Text style={linkStyle}>{privacyLabel}</Text>
+      </TouchableOpacity>
+      <Text style={dotStyle}>·</Text>
+      <TouchableOpacity onPress={onTerms} activeOpacity={0.72}>
+        <Text style={linkStyle}>{termsLabel}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function PaywallLegalFooter({
+  colors,
+  onSignIn,
+}: {
+  colors: ReturnType<typeof useColors>['colors'];
+  onSignIn?: () => void;
+}) {
+  const { t } = useLanguage();
+  const { session } = useAuth();
+  const { restorePurchases } = useSubscription();
+  const [busy, setBusy] = useState(false);
+
+  const openLegalLink = (url: string) => {
+    Linking.openURL(url).catch(() => {});
+  };
+
+  const handleRestore = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (!session) {
+      onSignIn?.();
+      return;
+    }
+    setBusy(true);
+    await restorePurchases();
+    setBusy(false);
+  };
+
+  return (
+    <PaywallLegalRow
+      colors={colors}
+      busy={busy}
+      onRestore={handleRestore}
+      onPrivacy={() => openLegalLink(LEGAL_LINKS.privacy)}
+      onTerms={() => openLegalLink(LEGAL_LINKS.terms)}
+      restoreLabel={t('onboarding.restoreShort')}
+      privacyLabel={t('onboarding.privacyShort')}
+      termsLabel={t('onboarding.termsShort')}
+    />
+  );
+}
+
+function PaywallBottomPanel({
+  children,
+  colors,
+}: {
+  children: React.ReactNode;
+  colors: ReturnType<typeof useColors>['colors'];
+}) {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, 0);
+
+  return (
+    <View
+      style={{
+        flexShrink: 0,
+        alignSelf: 'stretch',
+        marginHorizontal: -24,
+        marginBottom: -bottomInset,
+        borderTopWidth: 2,
+        borderTopColor: colors.hairline2,
+        backgroundColor: colors.surface,
+        paddingHorizontal: 24,
+        paddingTop: 28,
+        paddingBottom: bottomInset + 18,
+        alignItems: 'center',
+      }}
+    >
+      <View style={{ width: '100%', maxWidth: 360, alignItems: 'center' }}>
+        {children}
+      </View>
+    </View>
+  );
+}
+
+function PaywallScreenContainer({
+  children,
+  colors,
+}: {
+  children: React.ReactNode;
+  colors: ReturnType<typeof useColors>['colors'];
+}) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View
+      style={[
+        styles.paywallScreen,
+        {
+          backgroundColor: colors.bg,
+          paddingTop: Math.max(insets.top, 12),
+        },
+      ]}
+    >
+      {children}
+    </View>
+  );
+}
+
+function PaywallTitleTwoLines({
+  line1,
+  line2,
+  colors,
+}: {
+  line1: string;
+  line2: string;
+  colors: ReturnType<typeof useColors>['colors'];
+}) {
+  return (
+    <View style={{ alignItems: 'center', paddingTop: 4, paddingHorizontal: 8 }}>
+      <Text style={{ color: colors.text, fontSize: 28, lineHeight: 34, fontWeight: '600', textAlign: 'center' }}>
+        {line1}
+      </Text>
+      <Text style={{ color: colors.accSolid, fontSize: 28, lineHeight: 34, fontWeight: '700', textAlign: 'center', marginTop: 2 }}>
+        {line2}
+      </Text>
+    </View>
+  );
+}
+
+function AnimatedTrialBell({ colors }: { colors: ReturnType<typeof useColors>['colors'] }) {
+  const bellRotate = useRef(new Animated.Value(0)).current;
+  const badgeScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const swing = Animated.loop(
+      Animated.sequence([
+        Animated.timing(bellRotate, { toValue: 1, duration: 120, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(bellRotate, { toValue: -1, duration: 220, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(bellRotate, { toValue: 0.6, duration: 160, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(bellRotate, { toValue: -0.4, duration: 160, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(bellRotate, { toValue: 0, duration: 120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+        Animated.delay(1800),
+      ])
+    );
+
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(badgeScale, { toValue: 1.08, duration: 500, useNativeDriver: true }),
+        Animated.timing(badgeScale, { toValue: 1, duration: 500, useNativeDriver: true }),
+        Animated.delay(1200),
+      ])
+    );
+
+    swing.start();
+    pulse.start();
+    return () => {
+      swing.stop();
+      pulse.stop();
+    };
+  }, [badgeScale, bellRotate]);
+
+  const rotate = bellRotate.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: ['-14deg', '0deg', '14deg'],
+  });
+
+  return (
+    <View style={{ width: 156, height: 156, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={{ transform: [{ rotate }] }}>
+        <Svg width={146} height={146} viewBox="0 0 146 146">
+          <Path d="M73 23 C53 23 39 39 39 61 L39 82 C39 89 34 95 28 99 L28 108 L118 108 L118 99 C112 95 107 89 107 82 L107 61 C107 39 93 23 73 23 Z" fill={colors.surface2} />
+          <Path d="M60 115 C62 123 67 128 73 128 C79 128 84 123 86 115 Z" fill={colors.surface2} />
+          <Path d="M64 22 C64 15 69 11 73 11 C77 11 82 15 82 22" fill={colors.surface2} />
+        </Svg>
+      </Animated.View>
+      <Animated.View
+        style={{
+          position: 'absolute',
+          top: 22,
+          right: 8,
+          width: 66,
+          height: 66,
+          borderRadius: 33,
+          backgroundColor: colors.accSolid,
+          alignItems: 'center',
+          justifyContent: 'center',
+          transform: [{ scale: badgeScale }],
+        }}
+      >
+        <Text style={{ color: colors.surface3, fontSize: 38, lineHeight: 44, fontWeight: '700' }}>1</Text>
+      </Animated.View>
+    </View>
+  );
+}
 
 // Layout para preguntas estilo Duolingo
 export const QuestionLayout = ({ 
@@ -202,82 +667,18 @@ export const QuestionLayout = ({
 
 // Pantalla 1: Carga
 export const Step1_Loading = ({ onNext }: { onNext: () => void }) => {
-  const { colors } = useColors();
-  const { t } = useLanguage();
-  const breatheAnim = useRef(new Animated.Value(1)).current;
-  const textSlide = useRef(new Animated.Value(30)).current;
-  const textOpacity = useRef(new Animated.Value(0)).current;
-
-  // ZZZ animations - 3 letters with staggered delays
-  const zzz1 = useRef(new Animated.Value(0)).current;
-  const zzz2 = useRef(new Animated.Value(0)).current;
-  const zzz3 = useRef(new Animated.Value(0)).current;
-
   useEffect(() => {
-    // Breathing animation
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(breatheAnim, { toValue: 1.08, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(breatheAnim, { toValue: 1, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ])
-    ).start();
-
-    // Floating ZZZ with stagger
-    const animateZ = (anim: Animated.Value, delay: number) => {
-      setTimeout(() => {
-        Animated.loop(
-          Animated.sequence([
-            Animated.timing(anim, { toValue: 1, duration: 1800, easing: Easing.out(Easing.ease), useNativeDriver: true }),
-            Animated.timing(anim, { toValue: 0, duration: 0, useNativeDriver: true }),
-          ])
-        ).start();
-      }, delay);
-    };
-    animateZ(zzz1, 0);
-    animateZ(zzz2, 600);
-    animateZ(zzz3, 1200);
-
-    // Text slide-up
-    Animated.parallel([
-      Animated.timing(textSlide, { toValue: 0, duration: 800, delay: 400, easing: Easing.out(Easing.ease), useNativeDriver: true }),
-      Animated.timing(textOpacity, { toValue: 1, duration: 800, delay: 400, useNativeDriver: true }),
-    ]).start();
-
-    const t = setTimeout(onNext, 3000);
-    return () => clearTimeout(t);
-  }, []);
-
-  const renderZ = (anim: Animated.Value, size: number, offsetX: number, offsetY: number) => (
-    <Animated.Text style={{
-      position: 'absolute',
-      fontSize: size,
-      fontWeight: '900',
-      color: colors.accSolid,
-      opacity: anim.interpolate({ inputRange: [0, 0.3, 0.8, 1], outputRange: [0, 0.7, 0.7, 0] }),
-      transform: [
-        { translateX: offsetX },
-        { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [offsetY, offsetY - 50] }) },
-        { scale: anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.5, 1, 0.8] }) },
-      ],
-    }}>Z</Animated.Text>
-  );
+    const timer = setTimeout(onNext, 3000);
+    return () => clearTimeout(timer);
+  }, [onNext]);
 
   return (
     <View style={styles.centerContainer}>
-      <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-        <Animated.View style={{ transform: [{ scale: breatheAnim }] }}>
-          <RooPlaceholder action="durmiendo con ZZ" />
-        </Animated.View>
-        {/* Floating ZZZ */}
-        <View style={{ position: 'absolute', top: 10, right: -10, width: 60, height: 80 }}>
-          {renderZ(zzz1, 20, 0, 40)}
-          {renderZ(zzz2, 16, 20, 20)}
-          {renderZ(zzz3, 12, 40, 0)}
-        </View>
-      </View>
-      <Animated.Text style={[styles.title, { color: colors.text, marginTop: 40, opacity: textOpacity, transform: [{ translateY: textSlide }] }]}>
-        {t('onboarding.preparing')}
-      </Animated.Text>
+      <Image
+        source={require('../../assets/logo.jpeg')}
+        style={{ width: 132, height: 132, borderRadius: 30 }}
+        resizeMode="cover"
+      />
     </View>
   );
 };
@@ -288,14 +689,12 @@ export const Step2_Value = ({ onNext, onSignIn }: { onNext: () => void; onSignIn
   const { t } = useLanguage();
   const line1 = useRef(new Animated.Value(0)).current;
   const line2 = useRef(new Animated.Value(0)).current;
-  const line3 = useRef(new Animated.Value(0)).current;
   const btnAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.stagger(300, [
       Animated.timing(line1, { toValue: 1, duration: 600, easing: Easing.out(Easing.ease), useNativeDriver: true }),
       Animated.timing(line2, { toValue: 1, duration: 600, easing: Easing.out(Easing.ease), useNativeDriver: true }),
-      Animated.timing(line3, { toValue: 1, duration: 600, easing: Easing.out(Easing.ease), useNativeDriver: true }),
     ]).start(() => {
       Animated.spring(btnAnim, { toValue: 1, friction: 6, tension: 40, useNativeDriver: true }).start();
     });
@@ -308,7 +707,14 @@ export const Step2_Value = ({ onNext, onSignIn }: { onNext: () => void; onSignIn
 
   return (
     <View style={styles.container}>
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 }}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8, paddingTop: 64 }}>
+        {/* Logo */}
+        <Animated.Image
+          source={require('../../assets/logo.jpeg')}
+          style={[getLineStyle(line1), { width: 104, height: 104, borderRadius: 26, marginBottom: 30 }]}
+          resizeMode="cover"
+        />
+
         {/* Headline */}
         <Animated.Text style={[getLineStyle(line1), { fontSize: 44, fontWeight: '900', color: colors.text, textAlign: 'center', letterSpacing: -1 }]}>
           {t('onboarding.heroTitle')}
@@ -318,14 +724,9 @@ export const Step2_Value = ({ onNext, onSignIn }: { onNext: () => void; onSignIn
         <Animated.Text style={[getLineStyle(line2), { fontSize: 20, fontWeight: '500', color: colors.textDim, textAlign: 'center', marginTop: 16, lineHeight: 30 }]}>
           {t('onboarding.heroSubtitle')}
         </Animated.Text>
-
-        {/* Social proof */}
-        <Animated.View style={[getLineStyle(line3), { flexDirection: 'row', alignItems: 'center', marginTop: 32, backgroundColor: colors.surface, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 }]}>
-          <Text style={{ fontSize: 14, color: colors.textDim, fontWeight: '600' }}>{t('onboarding.socialProof')}</Text>
-        </Animated.View>
       </View>
 
-      <Animated.View style={{ gap: 12, transform: [{ scale: btnAnim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }) }], opacity: btnAnim }}>
+      <Animated.View style={{ transform: [{ scale: btnAnim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }) }], opacity: btnAnim }}>
         <SquishyButton
           color={colors.accSolid}
           shadowColor="#C62828"
@@ -339,16 +740,11 @@ export const Step2_Value = ({ onNext, onSignIn }: { onNext: () => void; onSignIn
           <Text style={[styles.btnText, { color: '#FFF', fontSize: 20 }]}>{t('onboarding.buildPlan')}</Text>
         </SquishyButton>
 
-        <TouchableOpacity
-          style={{ height: 54, borderRadius: 17, backgroundColor: '#EAEAEA', alignItems: 'center', justifyContent: 'center' }}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            onSignIn?.();
-          }}
-          activeOpacity={0.82}
-        >
-          <Text style={{ color: '#6F6F6F', fontSize: 16, fontWeight: FONT.bold }}>{t('onboarding.haveAccount')}</Text>
-        </TouchableOpacity>
+        {onSignIn ? (
+          <TouchableOpacity onPress={onSignIn} activeOpacity={0.7} style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 14, marginTop: 4 }}>
+            <Text style={{ color: colors.textDim, fontSize: 15, fontWeight: FONT.bold }}>{t('onboarding.haveAccount')}</Text>
+          </TouchableOpacity>
+        ) : null}
       </Animated.View>
     </View>
   );
@@ -368,7 +764,7 @@ export const Step3_Thought = ({ onNext }: { onNext: () => void }) => {
       options={options}
       selectedOption={selected}
       onSelectOption={setSelected}
-      onNext={() => { updateData({ wakeUpThought: selected }); onNext(); }}
+      onNext={() => { updateData({ wakeUpThought: selected ?? undefined }); onNext(); }}
     />
   );
 };
@@ -387,7 +783,7 @@ export const Step4_BedReason = ({ onNext }: { onNext: () => void }) => {
       options={options}
       selectedOption={selected}
       onSelectOption={setSelected}
-      onNext={() => { updateData({ stayInBedReason: selected }); onNext(); }}
+      onNext={() => { updateData({ stayInBedReason: selected ?? undefined }); onNext(); }}
     />
   );
 };
@@ -429,7 +825,7 @@ export const Step6_SnoozeFreq = ({ onNext }: { onNext: () => void }) => {
       options={options}
       selectedOption={selected}
       onSelectOption={setSelected}
-      onNext={() => { updateData({ snoozeHabit: selected }); onNext(); }}
+      onNext={() => { updateData({ snoozeHabit: selected ?? undefined }); onNext(); }}
     />
   );
 };
@@ -448,7 +844,7 @@ export const Step7_AlarmCount = ({ onNext }: { onNext: () => void }) => {
       options={options}
       selectedOption={selected}
       onSelectOption={setSelected}
-      onNext={() => { updateData({ alarmCount: selected }); onNext(); }}
+      onNext={() => { updateData({ alarmCount: selected ?? undefined }); onNext(); }}
     />
   );
 };
@@ -457,23 +853,17 @@ export const Step7_AlarmCount = ({ onNext }: { onNext: () => void }) => {
 export const Step8_Biology = ({ onNext }: { onNext: () => void }) => {
   const { colors } = useColors();
   const { t } = useLanguage();
+
   return (
-    <View style={styles.container}>
-      <View style={styles.centerContainer}>
-        <Text style={{ fontSize: 80, marginBottom: 30, textAlign: 'center' }}>??</Text>
-        <Text style={[styles.title, { color: colors.text, marginBottom: 20, fontSize: 32, fontFamily: FONT.extraBold }]}>
-          {t('onboarding.biologyTitle')}
-        </Text>
-        
-        <View style={{ paddingHorizontal: 20, alignItems: 'center' }}>
-          <Text style={{ fontSize: 16, color: colors.textDim, textAlign: 'center', lineHeight: 24, fontFamily: FONT.medium }}>
-            {t('onboarding.biologyBody')}
-          </Text>
-        </View>
-      </View>
-      
-      <DelayedContinueButton color={colors.text} textColor={colors.bg} shadowColor="rgba(0,0,0,0.3)" onPress={onNext} contentStyle={{ paddingVertical: 14 }} />
-    </View>
+    <ReadingPhraseScreen
+      icon={<Text style={{ fontSize: 68, lineHeight: 76 }}>🧠</Text>}
+      title={t('onboarding.biologyTitle')}
+      body={t('onboarding.biologyBody')}
+      onNext={onNext}
+      buttonColor={colors.text}
+      buttonTextColor={colors.bg}
+      buttonShadowColor="rgba(0,0,0,0.3)"
+    />
   );
 };
 
@@ -522,137 +912,170 @@ export const Step9_Chart = ({ onNext }: { onNext: () => void }) => {
     }]
   });
   
+  const DOT = 28;
+  const DOT_R = DOT / 2;
+  const ROW_GAP = 36;
+  const BADGE_GAP = 26;
+  const LABEL_W = 78;
+  const TRACK_W = DOT + 10 + LABEL_W;
+  const TIMELINE_ROW_STEP = DOT + ROW_GAP;
+  const TYPICAL_LINE_H = TIMELINE_ROW_STEP * 3 + DOT_R;
+  const ROO_LINE_H = TIMELINE_ROW_STEP * 2 + DOT + BADGE_GAP;
+
+  const renderTimelineRow = (
+    icon: React.ReactNode,
+    time: string,
+    label: string,
+    animStart: number,
+    animEnd: number,
+    muted = false,
+  ) => (
+    <Animated.View style={[styles.chartTrackRow, getAnimStyle(animStart, animEnd)]}>
+      <View style={styles.chartDotCol}>{icon}</View>
+      <View style={styles.chartLabelCol}>
+        <Text style={{ fontWeight: '800', color: muted ? colors.textDim : colors.text, fontSize: 14 }}>{time}</Text>
+        <Text style={{ fontSize: 11, color: colors.textDim }}>{label}</Text>
+      </View>
+    </Animated.View>
+  );
+
   return (
-    <View style={[styles.container, { paddingHorizontal: 0, paddingTop: 10 }]}>
-      <Text style={[styles.title, { color: colors.text, marginBottom: 30, paddingHorizontal: 16, fontSize: 28 }]}>
+    <View style={[styles.container, styles.chartScreen]}>
+      <Text style={[styles.title, styles.chartTitle, { color: colors.text }]}>
         {t('onboarding.chartOneMission')}
       </Text>
-      
-      <ScrollView style={{ flex: 1, marginBottom: 10 }} contentContainerStyle={{ paddingBottom: 20, flexGrow: 1, justifyContent: 'center' }}>
-        
-        <View style={{ marginHorizontal: 24, marginTop: 20 }}>
-          {/* Headers */}
-          <Animated.View style={[{ flexDirection: 'row', marginBottom: 30 }, getAnimStyle(0, 0.2)]}>
-            <Text style={{ flex: 1, textAlign: 'center', fontSize: 10, fontWeight: '800', color: colors.textDim, letterSpacing: 0.5 }}>{t('onboarding.typicalMorning')}</Text>
-            <Text style={{ flex: 1, textAlign: 'center', fontSize: 10, fontWeight: '800', color: '#34C759', letterSpacing: 0.5 }}>{t('onboarding.rooMorning')}</Text>
+
+      <View style={styles.chartBody}>
+        <View style={styles.chartCompareWrap}>
+          <Animated.View style={[styles.chartHeadersRow, getAnimStyle(0, 0.2)]}>
+            <Text style={[styles.chartHeaderLabel, { color: colors.textDim }]}>{t('onboarding.typicalMorning')}</Text>
+            <Text style={[styles.chartHeaderLabel, { color: '#34C759' }]}>{t('onboarding.rooMorning')}</Text>
           </Animated.View>
 
-          <View style={{ flexDirection: 'row', height: 280 }}>
+          <View style={styles.chartColumnsRow}>
             {/* Columna Izquierda: Mañana Típica */}
-            <View style={{ flex: 1, alignItems: 'center' }}>
-              <View style={{ width: 100, height: '100%', position: 'relative' }}>
-                {/* Línea continua en zigzag de fondo */}
-                <View style={{ position: 'absolute', top: 12, bottom: 12, left: 0, width: 24 }}>
-                  <Svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 24 100">
-                    <Path d="M12,0 L6,33 L12,66 L6,100" fill="none" stroke="#FF3B30" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    <Path d="M12,0 L6,33" fill="none" stroke="#FFA000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <View style={styles.chartColumn}>
+              <View style={[styles.chartTrack, { width: TRACK_W }]}>
+                <View style={[styles.chartZigzagLine, { height: TYPICAL_LINE_H }]}>
+                  <Svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 32 100">
+                    <Path
+                      d="M16,0 L27,6 L4,11 L22,18 L8,23 L30,31 L3,37 L19,43 L9,50 L28,57 L6,63 L25,70 L12,75 L30,83 L5,89 L18,94 L16,100"
+                      fill="none"
+                      stroke="#FF3B30"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <Path
+                      d="M16,0 L27,6 L4,11 L22,18 L8,23"
+                      fill="none"
+                      stroke="#FFA000"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
                   </Svg>
                 </View>
 
-                <View style={{ flex: 1, justifyContent: 'space-between', paddingVertical: 0 }}>
-                  
-                  <Animated.View style={[{ flexDirection: 'row', alignItems: 'center' }, getAnimStyle(0.2, 0.4)]}>
-                    <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', zIndex: 2, borderWidth: 2, borderColor: '#FFA000' }}>
-                      <Icon name="bell" size={12} color="#FFA000" variant="solid" />
+                {renderTimelineRow(
+                  <View style={[styles.chartDot, { backgroundColor: colors.surface, borderColor: '#FFA000' }]}>
+                    <Icon name="bell" size={14} color="#FFA000" variant="solid" />
+                  </View>,
+                  '07:00',
+                  t('alarmFlow.alarm'),
+                  0.2,
+                  0.4,
+                )}
+                {renderTimelineRow(
+                  <View style={[styles.chartDot, { backgroundColor: colors.surface, borderColor: '#FF3B30' }]}>
+                    <View style={{ transform: [{ rotate: '-14deg' }, { translateX: -1 }] }}>
+                      <Text style={{ fontWeight: '900', color: '#FF3B30', fontSize: 10, letterSpacing: -0.5 }}>Zz</Text>
                     </View>
-                    <View style={{ marginLeft: 10 }}>
-                      <Text style={{ fontWeight: '800', color: colors.text, fontSize: 12 }}>07:00</Text>
-                      <Text style={{ fontSize: 10, color: colors.textDim }}>{t('alarmFlow.alarm')}</Text>
+                  </View>,
+                  '07:09',
+                  t('onboarding.snoozeLabel'),
+                  0.4,
+                  0.6,
+                )}
+                {renderTimelineRow(
+                  <View style={[styles.chartDot, { backgroundColor: colors.surface, borderColor: '#FF3B30' }]}>
+                    <View style={{ transform: [{ rotate: '11deg' }, { translateX: 2 }, { translateY: 1 }] }}>
+                      <Text style={{ fontWeight: '900', color: '#FF3B30', fontSize: 12, letterSpacing: 1 }}>zZ</Text>
                     </View>
-                  </Animated.View>
-
-                  <Animated.View style={[{ flexDirection: 'row', alignItems: 'center', marginLeft: -6 }, getAnimStyle(0.4, 0.6)]}>
-                    <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', zIndex: 2, borderWidth: 2, borderColor: '#FF3B30' }}>
-                      <Text style={{ fontWeight: '900', color: '#FF3B30', fontSize: 10 }}>Zz</Text>
+                  </View>,
+                  '07:18',
+                  t('onboarding.snoozeLabel'),
+                  0.6,
+                  0.8,
+                )}
+                <Animated.View style={[styles.chartTrackRow, { marginBottom: 0 }, getAnimStyle(0.8, 1.0)]}>
+                  <View style={styles.chartDotCol}>
+                    <View style={[styles.chartDot, { backgroundColor: colors.surface, borderColor: '#FF3B30' }]}>
+                      <Icon name="info" size={16} color="#FF3B30" variant="solid" />
                     </View>
-                    <View style={{ marginLeft: 10 }}>
-                      <Text style={{ fontWeight: '800', color: colors.text, fontSize: 12 }}>07:09</Text>
-                      <Text style={{ fontSize: 10, color: colors.textDim }}>{t('onboarding.snoozeLabel')}</Text>
-                    </View>
-                  </Animated.View>
-
-                  <Animated.View style={[{ flexDirection: 'row', alignItems: 'center' }, getAnimStyle(0.6, 0.8)]}>
-                    <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', zIndex: 2, borderWidth: 2, borderColor: '#FF3B30' }}>
-                      <Text style={{ fontWeight: '900', color: '#FF3B30', fontSize: 10 }}>Zz</Text>
-                    </View>
-                    <View style={{ marginLeft: 10 }}>
-                      <Text style={{ fontWeight: '800', color: colors.text, fontSize: 12 }}>07:18</Text>
-                      <Text style={{ fontSize: 10, color: colors.textDim }}>{t('onboarding.snoozeLabel')}</Text>
-                    </View>
-                  </Animated.View>
-
-                  <Animated.View style={[{ flexDirection: 'row', alignItems: 'center', marginLeft: -6 }, getAnimStyle(0.8, 1.0)]}>
-                    <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', zIndex: 2, borderWidth: 2, borderColor: '#FF3B30' }}>
-                      <Icon name="info" size={14} color="#FF3B30" variant="solid" />
-                    </View>
-                    <View style={{ marginLeft: 10 }}>
-                      <Text style={{ fontWeight: '800', color: colors.textDim, fontSize: 12 }}>07:27</Text>
-                      <Text style={{ fontSize: 10, color: colors.textDim }}>{t('onboarding.panicLabel')}</Text>
-                    </View>
-                  </Animated.View>
-
-                </View>
+                  </View>
+                  <View style={styles.chartLabelCol}>
+                    <Text style={{ fontWeight: '800', color: colors.textDim, fontSize: 14 }}>07:27</Text>
+                    <Text style={{ fontSize: 11, color: colors.textDim }}>{t('onboarding.panicLabel')}</Text>
+                  </View>
+                </Animated.View>
+                <View style={[styles.chartLeftSpacer, { height: BADGE_GAP - 6 }]} />
               </View>
             </View>
 
             {/* Columna Derecha: Mañana con Roo */}
-            <View style={{ flex: 1, alignItems: 'center' }}>
-              <View style={{ width: 100, height: '100%', position: 'relative' }}>
-                {/* Línea recta continua de fondo */}
-                <Animated.View style={[{ position: 'absolute', top: 12, bottom: 50, left: 11, width: 2, alignItems: 'center' }, getAnimStyle(0.2, 0.6)]}>
-                  <Svg width="2" height="100%" preserveAspectRatio="none" viewBox="0 0 2 100">
-                    <Path d="M1,0 L1,100" fill="none" stroke="#34C759" strokeWidth="2" strokeLinecap="round" />
-                  </Svg>
-                </Animated.View>
+            <View style={styles.chartColumn}>
+              <View style={[styles.chartTrack, { width: TRACK_W }]}>
+                <Animated.View style={[styles.chartRooLine, { height: ROO_LINE_H + 12 }, getAnimStyle(0.2, 0.85)]} />
 
-              <View style={{ flex: 1, justifyContent: 'space-between', paddingVertical: 0 }}>
-                
-                <Animated.View style={[{ flexDirection: 'row', alignItems: 'center' }, getAnimStyle(0.2, 0.4)]}>
-                  <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', zIndex: 2, borderWidth: 2, borderColor: '#34C759' }}>
-                    <Icon name="bell" size={12} color="#34C759" variant="solid" />
+                {renderTimelineRow(
+                  <View style={[styles.chartDot, { backgroundColor: colors.surface, borderColor: '#34C759' }]}>
+                    <Icon name="bell" size={14} color="#34C759" variant="solid" />
+                  </View>,
+                  '07:00',
+                  t('alarmFlow.alarm'),
+                  0.2,
+                  0.4,
+                )}
+                {renderTimelineRow(
+                  <View style={[styles.chartDot, { backgroundColor: '#34C759', borderWidth: 0 }]}>
+                    <Icon name="check" size={16} color="#FFF" />
+                  </View>,
+                  '07:01',
+                  t('mission'),
+                  0.4,
+                  0.6,
+                )}
+                <Animated.View style={[styles.chartTrackRow, { marginBottom: BADGE_GAP }, getAnimStyle(0.6, 0.8)]}>
+                  <View style={styles.chartDotCol}>
+                    <View style={[styles.chartDot, { backgroundColor: colors.surface, borderColor: '#34C759' }]}>
+                      <Icon name="star" size={14} color="#34C759" />
+                    </View>
                   </View>
-                  <View style={{ marginLeft: 10 }}>
-                    <Text style={{ fontWeight: '800', color: colors.text, fontSize: 12 }}>07:00</Text>
-                    <Text style={{ fontSize: 10, color: colors.textDim }}>{t('alarmFlow.alarm')}</Text>
-                  </View>
-                </Animated.View>
-
-                <Animated.View style={[{ flexDirection: 'row', alignItems: 'center' }, getAnimStyle(0.4, 0.6)]}>
-                  <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#34C759', justifyContent: 'center', alignItems: 'center', zIndex: 2 }}>
-                    <Icon name="check" size={14} color="#FFF" />
-                  </View>
-                  <View style={{ marginLeft: 10 }}>
-                    <Text style={{ fontWeight: '800', color: colors.text, fontSize: 12 }}>07:01</Text>
-                    <Text style={{ fontSize: 10, color: colors.textDim }}>{t('mission')}</Text>
-                  </View>
-                </Animated.View>
-
-                <Animated.View style={[{ flexDirection: 'row', alignItems: 'center' }, getAnimStyle(0.6, 0.8)]}>
-                  <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', zIndex: 2, borderWidth: 2, borderColor: '#34C759' }}>
-                    <Icon name="star" size={12} color="#34C759" />
-                  </View>
-                  <View style={{ marginLeft: 10 }}>
-                    <Text style={{ fontWeight: '800', color: colors.text, fontSize: 12 }}>07:02</Text>
-                    <Text style={{ fontSize: 10, color: colors.textDim }}>{t('onboarding.fullEnergy')}</Text>
+                  <View style={styles.chartLabelCol}>
+                    <Text style={{ fontWeight: '800', color: colors.text, fontSize: 14 }}>07:02</Text>
+                    <Text style={{ fontSize: 11, color: colors.textDim }}>{t('onboarding.fullEnergy')}</Text>
                   </View>
                 </Animated.View>
 
-                {/* Badge de 25 min alineado con la base */}
-                <Animated.View style={[{ flexDirection: 'row', alignItems: 'center', marginLeft: -16, marginTop: 10 }, getScaleStyle(0.8, 1.0)]}>
-                  <View style={{ backgroundColor: '#E8F5E9', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center', zIndex: 2, borderWidth: 1, borderColor: '#34C759' }}>
-                    <Text style={{ color: '#28A745', fontWeight: '900', fontSize: 16 }}>25 MIN</Text>
-                    <Text style={{ color: '#28A745', fontWeight: '800', fontSize: 10, marginTop: 2 }}>{t('onboarding.minutesGained')}</Text>
+                <Animated.View style={[styles.chartBadgeSection, getScaleStyle(0.8, 1.0)]}>
+                  <View style={styles.chartBadgeSpine}>
+                    <View style={styles.chartBadge}>
+                      <View style={styles.chartBadgeTopRow}>
+                        <Text style={styles.chartBadgeNumber}>25</Text>
+                        <Text style={styles.chartBadgeMin}>MIN</Text>
+                      </View>
+                      <Text style={styles.chartBadgeLabel}>{t('onboarding.minutesGained')}</Text>
+                    </View>
                   </View>
                 </Animated.View>
-
-                </View>
               </View>
             </View>
           </View>
         </View>
-      </ScrollView>
+      </View>
 
-      <View style={{ paddingHorizontal: 24, paddingBottom: 10 }}>
+      <View style={styles.chartFooter}>
         <DelayedContinueButton color={colors.accSolid} textColor="#FFF" shadowColor="#C62828" onPress={onNext} contentStyle={{ paddingVertical: 14 }} />
       </View>
     </View>
@@ -672,7 +1095,7 @@ export const Step10_OneAlarm = ({ onNext }: { onNext: () => void }) => {
       options={options}
       selectedOption={selected}
       onSelectOption={setSelected}
-      onNext={() => { updateData({ singleAlarmConfidence: selected }); onNext(); }}
+      onNext={() => { updateData({ singleAlarmConfidence: selected ?? undefined }); onNext(); }}
     />
   );
 };
@@ -681,27 +1104,40 @@ export const Step10_OneAlarm = ({ onNext }: { onNext: () => void }) => {
 export const Step11_Temple = ({ onNext }: { onNext: () => void }) => {
   const { colors } = useColors();
   const { t } = useLanguage();
-  const [phase, setPhase] = useState(1);
-  const [wordsVisible, setWordsVisible] = useState(0);
+  const [phase, setPhase] = useState<1 | 2>(1);
+  const [charsVisible, setCharsVisible] = useState(0);
+  const [phasesRevealed, setPhasesRevealed] = useState(false);
 
-  const phase1Text = t('onboarding.trialTimeline') + ' ' + t('oneSmallMission');
-  const words = phase1Text.split(" ");
+  const typewriterText =
+    phase === 1 ? t('onboarding.habitIntroText') : t('onboarding.phasesTitle');
 
   const enterAnim = useRef(new Animated.Value(0)).current;
-
   const [showContinue, setShowContinue] = useState(false);
 
   useEffect(() => {
-    if (phase === 1) {
-      let currentWord = 0;
-      const interval = setInterval(() => {
-        currentWord++;
-        setWordsVisible(currentWord);
-        Haptics.selectionAsync(); // Haptic feedback for each word
-        if (currentWord >= words.length) {
-          clearInterval(interval);
-          setTimeout(() => {
+    setCharsVisible(0);
+    setShowContinue(false);
+    if (phase === 2) {
+      setPhasesRevealed(false);
+      enterAnim.setValue(0);
+    }
+
+    let currentChar = 0;
+    const CHAR_DELAY_MS = 72;
+    const interval = setInterval(() => {
+      currentChar++;
+      setCharsVisible(currentChar);
+      const char = typewriterText[currentChar - 1];
+      if (char === ' ' || char === '.' || char === ',') {
+        Haptics.selectionAsync();
+      }
+      if (currentChar >= typewriterText.length) {
+        clearInterval(interval);
+        setTimeout(() => {
+          if (phase === 1) {
             setPhase(2);
+          } else {
+            setPhasesRevealed(true);
             Animated.timing(enterAnim, {
               toValue: 1,
               duration: 3000,
@@ -709,24 +1145,26 @@ export const Step11_Temple = ({ onNext }: { onNext: () => void }) => {
             }).start(() => {
               setShowContinue(true);
             });
-          }, 1200);
-        }
-      }, 300); // Ligeramente más rápido
-      return () => clearInterval(interval);
-    }
-  }, [phase]);
+          }
+        }, 1200);
+      }
+    }, CHAR_DELAY_MS);
+
+    return () => clearInterval(interval);
+  }, [phase, typewriterText]);
 
   const TIERS = [
-    { id: 'tier1', name: 'DORMIL?N', days: 0, color: '#CD7F32', image: ROO_ASSETS.level1.base },
+    { id: 'tier1', name: 'DORMILÓN', days: 0, color: '#CD7F32', image: ROO_ASSETS.level1.base },
     { id: 'tier2', name: 'DESPIERTO', days: 4, color: '#A9A9A9', image: ROO_ASSETS.level2.base },
     { id: 'tier3', name: 'ACTIVO', days: 8, color: '#FFD700', image: ROO_ASSETS.level3.base },
     { id: 'tier4', name: 'PRO', days: 13, color: '#50c8ff', image: ROO_ASSETS.level4.base },
     { id: 'tier5', name: 'LEYENDA', days: 18, color: '#FF3B30', image: ROO_ASSETS.level5.base },
-    { id: 'endgame', name: 'SAL?N FAMA', days: 21, color: '#000000', image: ROO_ASSETS.level6.base },
+    { id: 'endgame', name: 'SALÓN FAMA', days: 21, color: '#000000', image: ROO_ASSETS.level6.base },
   ];
 
+  const displayedText = typewriterText.slice(0, charsVisible);
+
   if (phase === 1) {
-    const displayedText = words.slice(0, wordsVisible).join(" ");
     return (
       <View style={[styles.container, { justifyContent: 'center' }]}>
         <View style={styles.characterRow}>
@@ -741,9 +1179,10 @@ export const Step11_Temple = ({ onNext }: { onNext: () => void }) => {
     <View style={[styles.container, { paddingHorizontal: 0, paddingTop: 10 }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 10 }}>
         <RooPlaceholder action="épico con antorcha frente al Templo" small />
-        <SpeechBubble text={t('evolutionPath')} />
+        <SpeechBubble text={displayedText} />
       </View>
-      
+
+      {phasesRevealed && (
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
         <View style={{ alignItems: 'center', width: '100%', position: 'relative' }}>
           
@@ -825,14 +1264,20 @@ export const Step11_Temple = ({ onNext }: { onNext: () => void }) => {
           })}
         </View>
       </ScrollView>
+      )}
 
-      <View style={{ paddingHorizontal: 24, paddingBottom: 10, height: 70, justifyContent: 'flex-end' }}>
-        {showContinue && (
-          <Animated.View style={{ opacity: 1 }}>
-            <SquishyButton color={colors.accSolid} shadowColor="#C62828" onPress={onNext} contentStyle={{ paddingVertical: 14 }}>
-              <Text style={[styles.btnText, { color: '#FFF' }]}>{t('onboarding.continue')}</Text>
-            </SquishyButton>
-          </Animated.View>
+      <View style={styles.templeFooter}>
+        {phasesRevealed ? (
+          <Text style={[styles.habitFooterNote, { color: colors.textDim }]}>
+            {t('onboarding.habitCreatedIn21Days')}
+          </Text>
+        ) : null}
+        {showContinue ? (
+          <SquishyButton color={colors.accSolid} shadowColor="#C62828" onPress={onNext} contentStyle={{ paddingVertical: 14 }}>
+            <Text style={[styles.btnText, { color: '#FFF' }]}>{t('onboarding.continue')}</Text>
+          </SquishyButton>
+        ) : (
+          <View style={{ height: 58 }} />
         )}
       </View>
     </View>
@@ -842,23 +1287,18 @@ export const Step11_Temple = ({ onNext }: { onNext: () => void }) => {
 // Pantalla 12: Acción física
 export const Step12_PhysicalAction = ({ onNext }: { onNext: () => void }) => {
   const { colors } = useColors();
+  const { t } = useLanguage();
+
   return (
-    <View style={styles.container}>
-      <View style={styles.centerContainer}>
-        <Icon name="bolt" size={80} color={colors.accSolid} style={{ marginBottom: 30 }} variant="solid" />
-        <Text style={[styles.title, { color: colors.text, marginBottom: 20, fontSize: 32, fontFamily: FONT.extraBold }]}>
-          Por qué la acción te despierta.
-        </Text>
-        
-        <View style={{ paddingHorizontal: 20, alignItems: 'center' }}>
-          <Text style={{ fontSize: 16, color: colors.textDim, textAlign: 'center', lineHeight: 24, fontFamily: FONT.medium }}>
-            Completar una tarea física interrumpe el bucle de sueño al instante y arranca tu cerebro.
-          </Text>
-        </View>
-      </View>
-      
-      <DelayedContinueButton color={colors.text} textColor={colors.bg} shadowColor="rgba(0,0,0,0.3)" onPress={onNext} contentStyle={{ paddingVertical: 14 }} />
-    </View>
+    <ReadingPhraseScreen
+      icon={<Icon name="bolt" size={72} color={colors.accSolid} variant="solid" />}
+      title={t('onboarding.physicalActionTitle')}
+      body={t('onboarding.physicalActionBody')}
+      onNext={onNext}
+      buttonColor={colors.text}
+      buttonTextColor={colors.bg}
+      buttonShadowColor="rgba(0,0,0,0.3)"
+    />
   );
 };
 
@@ -876,7 +1316,7 @@ export const Step13_WakeFeeling = ({ onNext }: { onNext: () => void }) => {
       options={options}
       selectedOption={selected}
       onSelectOption={setSelected}
-      onNext={() => { updateData({ wakeUpFeeling: selected }); onNext(); }}
+      onNext={() => { updateData({ wakeUpFeeling: selected ?? undefined }); onNext(); }}
     />
   );
 };
@@ -885,9 +1325,9 @@ export const Step13_WakeFeeling = ({ onNext }: { onNext: () => void }) => {
 export const Step14_MissionMode = ({ onNext }: { onNext: () => void }) => {
   const { updateData } = useOnboarding();
   const { t, ta } = useLanguage();
-  const [selected, setSelected] = useState<string | null>(null);
   const options = ta('onboarding.missionModeOptions');
   const rouletteLabel = options[1] || 'Roo Roulette';
+  const [selected, setSelected] = useState<string | null>(rouletteLabel);
 
   return (
     <QuestionLayout 
@@ -910,7 +1350,10 @@ export const Step15_MissionConfig = ({ onNext }: { onNext: () => void }) => {
   const { data, updateData } = useOnboarding();
   const { t, missionCopy } = useLanguage();
   const isRoulette = data.missionType === 'roulette';
-  const [selected, setSelected] = useState<string[]>(isRoulette ? DEFAULT_ENABLED_MISSIONS : [DEFAULT_PERSONALIZED_MISSION]);
+  const [selected, setSelected] = useState<string[]>(() => {
+    if (data.selectedMissions?.length) return data.selectedMissions;
+    return isRoulette ? DEFAULT_ENABLED_MISSIONS : [DEFAULT_PERSONALIZED_MISSION];
+  });
 
   const toggleMission = (id: string) => {
     if (isRoulette) {
@@ -985,7 +1428,7 @@ export const Step16_AwakeTime = ({ onNext }: { onNext: () => void }) => {
       options={options}
       selectedOption={selected}
       onSelectOption={setSelected}
-      onNext={() => { updateData({ wakeUpDuration: selected }); onNext(); }}
+      onNext={() => { updateData({ wakeUpDuration: selected ?? undefined }); onNext(); }}
     />
   );
 };
@@ -1076,148 +1519,106 @@ export const Step18_ProtectedDays = ({ onNext }: { onNext: () => void }) => {
 export const Step18b_GoalSummary = ({ onNext }: { onNext: () => void }) => {
   const { colors } = useColors();
   const { data } = useOnboarding();
+  const { t } = useLanguage();
   const targetTime = data.targetWakeTime || new Date(new Date().setHours(7, 0, 0, 0));
   const daysCount = data.protectedDays?.length || 5;
-  const hours = targetTime.getHours();
-  const minutes = targetTime.getMinutes();
-  const isPM = hours >= 12;
-  const hour12 = hours % 12 || 12;
-  const timeText = `${hour12}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
-  const monthlyHours = Math.round(daysCount * 4.3 * 0.5);
-  const accent = colors.brandOrange || colors.accSolid;
+  const { clock, period } = formatGoalWakeTime(targetTime);
+  const monthlyHours = getMonthlyHoursSaved({
+    protectedDaysPerWeek: daysCount,
+    wakeUpDuration: data.wakeUpDuration,
+    snoozeHabit: data.snoozeHabit,
+  });
+  const accent = colors.accSolid;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg, paddingHorizontal: 28 }]}>
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 2, paddingBottom: 14 }}>
-        <Text style={{ color: colors.text, fontSize: 32, lineHeight: 39, fontWeight: '900', textAlign: 'center', maxWidth: 330 }}>
-          Despertar a las <Text style={{ color: accent }}>{timeText}</Text> es tu objetivo.
+        <Text
+          style={{
+            color: colors.text,
+            fontSize: 20,
+            lineHeight: 26,
+            fontWeight: '800',
+            textAlign: 'center',
+            maxWidth: 320,
+            marginBottom: 18,
+          }}
+        >
+          {t('onboarding.goalSummaryLead')}
         </Text>
 
-        <View style={{ marginTop: 30, alignItems: 'center', gap: 8 }}>
-          <Text style={{ color: accent, fontSize: 20, lineHeight: 26, fontWeight: '900', textAlign: 'center' }}>
-            {daysCount} días a la semana
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center' }}>
+          <Text
+            style={{
+              color: accent,
+              fontSize: 58,
+              lineHeight: 62,
+              fontFamily: FONT_FAMILY.extraBold,
+              fontWeight: '900',
+              letterSpacing: -1,
+            }}
+          >
+            {clock}
           </Text>
-          <Text style={{ color: colors.textDim, fontSize: 18, lineHeight: 24, fontWeight: '900', textAlign: 'center' }}>
-            +{monthlyHours} horas este mes
+          <Text
+            style={{
+              color: accent,
+              fontSize: 28,
+              lineHeight: 32,
+              fontFamily: FONT_FAMILY.extraBold,
+              fontWeight: '900',
+              marginLeft: 6,
+              marginBottom: 4,
+            }}
+          >
+            {period}
           </Text>
         </View>
 
-        <Text style={{ marginTop: 42, color: colors.textDim, fontSize: 16, lineHeight: 24, fontWeight: FONT.semiBold, textAlign: 'center', maxWidth: 255 }}>
-          Protege tus mañanas clave.
+        <View style={{ marginTop: 34, alignItems: 'center', gap: 14 }}>
+          <Text
+            style={{
+              color: accent,
+              fontSize: 19,
+              lineHeight: 24,
+              fontWeight: '900',
+              textAlign: 'center',
+            }}
+          >
+            {t('onboarding.goalSummaryDays', { count: daysCount })}
+          </Text>
+          <Text
+            style={{
+              color: accent,
+              fontSize: 30,
+              lineHeight: 36,
+              fontFamily: FONT_FAMILY.extraBold,
+              fontWeight: '900',
+              textAlign: 'center',
+              letterSpacing: -0.5,
+            }}
+          >
+            {t('onboarding.goalSummaryHours', { hours: monthlyHours })}
+          </Text>
+        </View>
+
+        <Text
+          style={{
+            marginTop: 38,
+            color: colors.textDim,
+            fontSize: 16,
+            lineHeight: 24,
+            fontWeight: FONT.semiBold,
+            textAlign: 'center',
+            maxWidth: 255,
+          }}
+        >
+          {t('onboarding.goalSummaryFooter')}
         </Text>
       </View>
 
       <DelayedContinueButton color={colors.accSolid} textColor="#FFFFFF" shadowColor="#C62828" onPress={onNext} contentStyle={{ paddingVertical: 14 }} />
     </View>
-  );
-};
-
-// Pantalla 19: Sonidos
-export const Step19_SoundSettings = ({ onNext }: { onNext: () => void }) => {
-  const { colors } = useColors();
-  const { updateData } = useOnboarding();
-  const { t, soundName, soundCategory } = useLanguage();
-  const [selectedSoundId, setSelectedSoundId] = useState<string | null>(null);
-  const [audioObj, setAudioObj] = useState<RooAudioPlayer | null>(null);
-  const [playingSoundId, setPlayingSoundId] = useState<string | null>(null);
-
-  useEffect(() => {
-    return () => {
-      stopRooAudioPlayer(audioObj);
-    };
-  }, [audioObj]);
-
-  const playPreview = async (soundAsset: any) => {
-    if (audioObj) {
-      stopRooAudioPlayer(audioObj);
-      setAudioObj(null);
-      if (playingSoundId === soundAsset.id) {
-        setPlayingSoundId(null);
-        return;
-      }
-    }
-    try {
-      await configurePlaybackAudio(false);
-      const newSound = createRooAudioPlayer(soundAsset.file);
-      setAudioObj(newSound);
-      setPlayingSoundId(soundAsset.id);
-      newSound.play();
-      newSound.addListener('playbackStatusUpdate', (status: any) => {
-        if (status.didJustFinish) {
-          stopRooAudioPlayer(newSound);
-          setAudioObj(null);
-          setPlayingSoundId(null);
-        }
-      });
-    } catch (e) {
-      console.log('Error playing sound', e);
-    }
-  };
-
-  const handleNext = () => {
-    stopRooAudioPlayer(audioObj);
-    updateData({ soundSettings: selectedSoundId });
-    onNext();
-  };
-
-  return (
-    <QuestionLayout 
-      question={t('onboarding.qSound')}
-      rooAction="con auriculares"
-      onNext={handleNext}
-      isNextDisabled={!selectedSoundId}
-    >
-      <View style={{ flex: 1 }}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
-          {SOUND_CATEGORIES.map((cat) => {
-            const catSounds = SOUND_ASSETS.filter(s => s.category === cat);
-            if (catSounds.length === 0) return null;
-            return (
-              <View key={cat} style={{ marginBottom: 20 }}>
-                <Text style={{ fontSize: 12, fontFamily: FONT.extraBold, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginLeft: 4, color: colors.textFaint }}>{soundCategory(cat)}</Text>
-                {catSounds.map((s) => {
-                  const isSelected = selectedSoundId === s.id;
-                  const isPlaying = playingSoundId === s.id;
-                  const activeColor = colors.brandOrange || '#FFA000';
-                  return (
-                    <SquishyButton 
-                      key={s.id}
-                      style={{ marginBottom: 6 }}
-                      contentStyle={{
-                        flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 12,
-                        borderWidth: 2,
-                        borderColor: isSelected ? activeColor : 'transparent',
-                      }}
-                      color={isSelected ? colors.surface : 'transparent'}
-                      shadowColor="rgba(0,0,0,0.06)"
-                      borderRadius={12}
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        setSelectedSoundId(s.id);
-                        playPreview(s);
-                      }}
-                    >
-                      <LinearGradient colors={s.gradient} style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, fontFamily: FONT.bold, color: colors.text }}>{soundName(s.id, s.name)}</Text>
-                      </View>
-                      {isSelected && <View style={{ marginRight: 12 }}><Icon name="check" size={18} color={activeColor} /></View>}
-                      <TouchableOpacity onPress={() => playPreview(s)} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
-                        {isPlaying ? (
-                          <SoundWave color={activeColor} />
-                        ) : (
-                          <Icon name="volume" size={16} color={colors.textFaint} />
-                        )}
-                      </TouchableOpacity>
-                    </SquishyButton>
-                  );
-                })}
-              </View>
-            );
-          })}
-        </ScrollView>
-      </View>
-    </QuestionLayout>
   );
 };
 
@@ -1489,12 +1890,31 @@ export const Step26_HardPaywall = ({ onNext }: { onNext: () => void }) => {
 };
 
 // Pantalla 27: Auth
-export const Step27_Auth = ({ onNext, onSignIn }: { onNext: () => void; onSignIn?: () => void }) => {
-  const { signInWithApple, signInWithGoogle } = useAuth();
+export const Step27_Auth = ({ onNext, onSignUp }: { onNext: () => void; onSignUp?: () => void }) => {
+  const { session, signInWithApple, signInWithGoogle } = useAuth();
   const { colors } = useColors();
+  const { data } = useOnboarding();
   const { t } = useLanguage();
   const [showEmail, setShowEmail] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
   const emailAnim = useRef(new Animated.Value(0)).current;
+  const skippedForSession = useRef(false);
+
+  useEffect(() => {
+    if (!session?.user || skippedForSession.current) return;
+    skippedForSession.current = true;
+    void (async () => {
+      if (data.targetWakeTime) {
+        try {
+          await applyOnboardingSetup(session.user.id, data, session.user);
+        } catch (err) {
+          console.log('Onboarding save after existing session failed', err);
+        }
+      }
+      onNext();
+    })();
+  }, [session?.user?.id]);
 
   useEffect(() => {
     Animated.timing(emailAnim, {
@@ -1504,54 +1924,82 @@ export const Step27_Auth = ({ onNext, onSignIn }: { onNext: () => void; onSignIn
     }).start();
   }, [showEmail]);
 
-  const emailHeight = emailAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 70] });
+  if (session?.user) {
+    return <View style={[styles.container, { backgroundColor: colors.bg }]} />;
+  }
+
+  const handleOAuth = async (provider: 'google' | 'apple') => {
+    setOauthError(null);
+    setBusy(true);
+    const result = provider === 'google'
+      ? await signInWithGoogle()
+      : await signInWithApple();
+    setBusy(false);
+    if (result.error) {
+      setOauthError(result.error);
+      return;
+    }
+    const { data: authData } = await supabase.auth.getUser();
+    if (authData.user && data.targetWakeTime) {
+      try {
+        await applyOnboardingSetup(authData.user.id, data, authData.user);
+      } catch (err) {
+        console.log('Onboarding save after OAuth failed', err);
+      }
+    }
+    onNext();
+  };
+
+  const emailHeight = emailAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 72] });
   const emailOpacity = emailAnim.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 0, 1] });
   const emailTranslate = emailAnim.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] });
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <View style={{ flex: 1, justifyContent: 'center' }}>
-        <Text style={[styles.title, { color: '#050505', marginBottom: 34, textAlign: 'left', fontSize: 39, lineHeight: 45 }]}>{t('auth.saveProgress')}</Text>
+        <Text style={[styles.title, { color: colors.text, marginBottom: 34, textAlign: 'left', fontSize: 39, lineHeight: 45 }]}>{t('auth.saveProgress')}</Text>
 
         <View style={{ width: '100%', gap: 12 }}>
           <TouchableOpacity
-            style={{ height: 58, flexDirection: 'row', backgroundColor: '#050505', borderRadius: 18, alignItems: 'center', justifyContent: 'center', gap: 12 }}
-            onPress={signInWithApple}
+            style={{ height: 58, flexDirection: 'row', backgroundColor: colors.text, borderRadius: 18, alignItems: 'center', justifyContent: 'center', gap: 12, opacity: busy ? 0.7 : 1 }}
+            onPress={() => handleOAuth('apple')}
+            disabled={busy}
             activeOpacity={0.86}
           >
             <AppleIcon />
-            <Text style={{ color: '#fff', fontSize: 17, fontWeight: FONT.bold }} numberOfLines={1}>{t('auth.continueApple')}</Text>
+            <Text style={{ color: colors.bg, fontSize: 17, fontWeight: FONT.bold }} numberOfLines={1}>{t('auth.continueApple')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={{ height: 58, flexDirection: 'row', backgroundColor: '#fff', borderRadius: 18, alignItems: 'center', justifyContent: 'center', gap: 12, borderWidth: 1.5, borderColor: '#E9E6DF' }}
-            onPress={signInWithGoogle}
+            style={{ height: 58, flexDirection: 'row', backgroundColor: colors.surface, borderRadius: 18, alignItems: 'center', justifyContent: 'center', gap: 12, borderWidth: 1.5, borderColor: colors.border, opacity: busy ? 0.7 : 1 }}
+            onPress={() => handleOAuth('google')}
+            disabled={busy}
             activeOpacity={0.86}
           >
             <GoogleIcon />
-            <Text style={{ color: '#373737', fontSize: 17, fontWeight: FONT.bold }} numberOfLines={1}>{t('auth.continueGoogle')}</Text>
+            <Text style={{ color: colors.text, fontSize: 17, fontWeight: FONT.bold }} numberOfLines={1}>{t('auth.continueGoogle')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={{ height: 52, borderRadius: 16, backgroundColor: '#FFF8F8', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}
+            style={{ height: 52, borderRadius: 16, backgroundColor: colors.accSolid + '15', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}
             onPress={() => setShowEmail(prev => !prev)}
             activeOpacity={0.75}
           >
-            <Icon name="mail" size={18} color="#E53935" variant="outline" />
-            <Text style={{ color: '#E53935', fontSize: 16, fontWeight: FONT.bold }} numberOfLines={1}>{t('auth.continueEmail')}</Text>
-            <Icon name={showEmail ? 'chevDown' : 'chevR'} size={17} color="#A09E9B" />
+            <Icon name="mail" size={18} color={colors.accSolid} variant="outline" />
+            <Text style={{ color: colors.accSolid, fontSize: 16, fontWeight: FONT.bold }} numberOfLines={1}>{t('auth.continueEmail')}</Text>
+            <Icon name={showEmail ? 'chevDown' : 'chevR'} size={17} color={colors.textDim} />
           </TouchableOpacity>
 
           <Animated.View style={{ height: emailHeight, opacity: emailOpacity, overflow: 'hidden', transform: [{ translateY: emailTranslate }] }}>
             <View style={{ gap: 10, paddingTop: 8 }}>
               <TouchableOpacity
-                style={{ height: 54, borderRadius: 17, backgroundColor: '#E53935', alignItems: 'center', justifyContent: 'center' }}
-                onPress={onNext}
+                style={{ height: 54, borderRadius: 17, backgroundColor: colors.accSolid, alignItems: 'center', justifyContent: 'center' }}
+                onPress={() => (onSignUp ? onSignUp() : onNext())}
                 activeOpacity={0.86}
               >
                 <Text style={{ color: '#fff', fontSize: 17, fontWeight: FONT.bold }}>{t('onboarding.createWithEmail')}</Text>
               </TouchableOpacity>
-              <Text style={{ color: '#A09E9B', fontSize: 13, lineHeight: 18, textAlign: 'center', fontWeight: FONT.semiBold }}>
+              <Text style={{ color: colors.textDim, fontSize: 13, lineHeight: 18, textAlign: 'center', fontWeight: FONT.semiBold }}>
                 {t('onboarding.emailNextStep')}
               </Text>
             </View>
@@ -1559,9 +2007,11 @@ export const Step27_Auth = ({ onNext, onSignIn }: { onNext: () => void; onSignIn
         </View>
       </View>
 
-      <TouchableOpacity onPress={onSignIn} activeOpacity={0.75} style={{ paddingVertical: 14, alignItems: 'center' }}>
-        <Text style={{ color: '#A09E9B', fontSize: 14, fontWeight: FONT.bold }}>{t('onboarding.haveAccount')}</Text>
-      </TouchableOpacity>
+      {oauthError ? (
+        <Text style={{ color: colors.accSolid, fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: FONT.semiBold }}>
+          {oauthError}
+        </Text>
+      ) : null}
     </View>
   );
 };
@@ -1576,40 +2026,16 @@ export const Step28_FinalForm = ({ onNext }: { onNext: () => void }) => {
 
   const handleSave = async () => {
     updateData({ userName: name });
-    const selectedMissions = data.selectedMissions && data.selectedMissions.length > 0
-      ? data.selectedMissions
-      : [DEFAULT_PERSONALIZED_MISSION];
-    const missionMode = data.missionType === 'roulette' ? 'roulette' : 'personalized';
-    const personalizedMission = missionMode === 'roulette'
-      ? selectedMissions[0]
-      : selectedMissions[0] || DEFAULT_PERSONALIZED_MISSION;
-
     const { data: authData } = await supabase.auth.getUser();
     if (authData.user) {
-      await supabase
-        .from('user_settings')
-        .update({
-          name,
-          mission_mode: missionMode,
-          enabled_missions: missionMode === 'roulette' ? selectedMissions : DEFAULT_ENABLED_MISSIONS,
-          personalized_mission: personalizedMission,
-          default_mission: personalizedMission,
-          wake_up_thought: data.wakeUpThought,
-          stay_in_bed_reason: data.stayInBedReason,
-          usual_wake_time: data.usualWakeTime?.toISOString(),
-          snooze_habit: data.snoozeHabit,
-          alarm_count: data.alarmCount,
-          single_alarm_confidence: data.singleAlarmConfidence,
-          wake_up_feeling: data.wakeUpFeeling,
-          wake_up_duration: data.wakeUpDuration,
-          target_wake_time: data.targetWakeTime?.toISOString(),
-          protected_days: data.protectedDays,
-          alarm_sound: data.soundSettings,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', authData.user.id);
+      try {
+        await applyOnboardingSetup(authData.user.id, { ...data, userName: name }, authData.user);
+      } catch (err) {
+        console.log('Onboarding save failed', err);
+      }
     }
     onNext();
+    requestAuthNavigationRefresh();
   };
 
   return (
@@ -1645,31 +2071,102 @@ export const Step28_FinalForm = ({ onNext }: { onNext: () => void }) => {
 };
 
 // Pantalla 28b: Tu Plan de Mañana
+const BuildingPlanPhase = ({ colors }: { colors: ReturnType<typeof useColors>['colors'] }) => {
+  const { t, ta } = useLanguage();
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const textOpacity = useRef(new Animated.Value(1)).current;
+  const [stepIndex, setStepIndex] = useState(0);
+  const steps = ta('onboarding.buildingPlanSteps');
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(spinAnim, {
+        toValue: 1,
+        duration: 1000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+
+    let current = 0;
+    const interval = setInterval(() => {
+      Animated.timing(textOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => {
+        current += 1;
+        if (current >= steps.length) {
+          clearInterval(interval);
+          return;
+        }
+        setStepIndex(current);
+        Animated.timing(textOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
+      });
+    }, 650);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 28 }}>
+      <Animated.View
+        style={{
+          width: 64,
+          height: 64,
+          borderRadius: 32,
+          borderWidth: 5,
+          borderColor: colors.surface2,
+          borderTopColor: colors.accSolid,
+          transform: [{ rotate: spin }],
+          marginBottom: 30,
+        }}
+      />
+      <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900', textAlign: 'center', marginBottom: 10 }}>
+        {t('onboarding.buildingPlanTitle')}
+      </Text>
+      <Animated.Text style={{ color: colors.textDim, fontSize: 15, fontWeight: FONT.semiBold, textAlign: 'center', opacity: textOpacity }}>
+        {steps[stepIndex]}
+      </Animated.Text>
+    </View>
+  );
+};
+
 export const Step28b_MorningPlan = ({ onNext }: { onNext: () => void }) => {
   const { colors } = useColors();
   const { data } = useOnboarding();
-  const { t, missionCopy, soundName: translatedSoundName } = useLanguage();
+  const { t, missionCopy } = useLanguage();
   const enterAnim = useRef(new Animated.Value(0)).current;
+  const [phase, setPhase] = useState<'building' | 'ready'>('building');
 
   useEffect(() => {
+    const timeout = setTimeout(() => setPhase('ready'), 2800);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    if (phase !== 'ready') return;
+    enterAnim.setValue(0);
     Animated.timing(enterAnim, {
       toValue: 1,
       duration: 900,
       easing: Easing.out(Easing.ease),
       useNativeDriver: true,
     }).start();
-  }, []);
+  }, [phase]);
+
+  if (phase === 'building') {
+    return (
+      <View style={[styles.container, { paddingHorizontal: 28 }]}>
+        <BuildingPlanPhase colors={colors} />
+      </View>
+    );
+  }
 
   const targetTime = data.targetWakeTime || new Date(new Date().setHours(6, 30, 0, 0));
   const hours = targetTime.getHours().toString().padStart(2, '0');
   const minutes = targetTime.getMinutes().toString().padStart(2, '0');
 
-  const soundId = data.soundSettings;
-  const soundObj = soundId ? SOUND_ASSETS.find(s => s.id === soundId) : null;
-  const soundName = translatedSoundName(soundId, soundObj?.name || 'Classic Radar');
-
   const missionIds = data.selectedMissions || ['make_bed'];
-  const missionMode = data.missionType || 'personalized';
+  const missionMode = data.missionType || 'roulette';
   const mainMission = getMission(missionIds[0]);
   const isRoulette = missionMode === 'roulette';
   const activeDays = data.protectedDays || [0, 1, 2, 3, 4];
@@ -1678,7 +2175,6 @@ export const Step28b_MorningPlan = ({ onNext }: { onNext: () => void }) => {
   const rows = [
     { icon: 'bell', label: t('alarmFlow.alarm'), value: hours + ':' + minutes },
     { icon: isRoulette ? 'repeat' : 'check', label: t('mission'), value: isRoulette ? t('onboarding.rouletteShort') : missionCopy(mainMission.id).label },
-    { icon: 'volume', label: t('sound'), value: soundName },
   ];
 
   const getAnimDelay = (index: number) => ({
@@ -1815,99 +2311,115 @@ export const Step29_Processing = ({ onNext }: { onNext: () => void }) => {
 
 
 // Arrays de exportación
-export const Step30_TrialIntro = ({ onNext }: { onNext: () => void }) => {
+export const Step30_TrialIntro = ({
+  onNext,
+  onSignIn,
+  onSignOutSession,
+}: {
+  onNext: () => void;
+  onSignIn?: () => void;
+  onSignOutSession?: () => void;
+}) => {
   const { colors } = useColors();
   const { t } = useLanguage();
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg, paddingHorizontal: 24, paddingTop: 8 }]}> 
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: colors.text, fontSize: 31, lineHeight: 37, fontWeight: '900', textAlign: 'center', marginBottom: 28, maxWidth: 330 }}>
-          {t('onboarding.tryRooFree')}
-        </Text>
+    <PaywallScreenContainer colors={colors}>
+      <View style={{ flexShrink: 0 }}>
+        <PaywallTitleTwoLines
+          line1={t('onboarding.tryRooFreeLine1')}
+          line2={t('onboarding.tryRooFreeLine2')}
+          colors={colors}
+        />
+      </View>
 
-        <View style={{ width: '100%', maxWidth: 330, borderRadius: 26, borderWidth: 2, borderColor: colors.hairline2, backgroundColor: colors.surface, overflow: 'hidden' }}>
-          <View style={{ paddingTop: 24, paddingHorizontal: 22, paddingBottom: 22, alignItems: 'center' }}>
-            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 22 }}>
-              <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: 'rgba(229,57,53,0.08)', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon name="bell" size={25} color={colors.accSolid} />
-              </View>
-              <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: 'rgba(229,57,53,0.08)', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon name="check" size={25} color={colors.accSolid} stroke={3} />
-              </View>
-            </View>
-            <Text style={{ color: colors.text, fontSize: 20, lineHeight: 25, fontWeight: '900', textAlign: 'center', maxWidth: 250 }}>
-              {t('onboarding.alarmMissionsUnlocked')}
-            </Text>
-          </View>
+      <View style={{ flex: 1, minHeight: 0 }} />
 
-          <View style={{ backgroundColor: colors.surface2, paddingVertical: 15, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-            <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' }}>
-              <Icon name="check" size={16} color={colors.accSolid} variant="outline" stroke={3} />
-            </View>
-            <Text style={{ color: colors.text, fontSize: 16, lineHeight: 20, fontWeight: '900', textAlign: 'center', flexShrink: 1 }}>{t('onboarding.noPaymentNow')}</Text>
+      <PaywallBottomPanel colors={colors}>
+        <View style={{ width: '100%', alignItems: 'center', gap: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            <Icon name="check" size={22} color={colors.text} variant="outline" stroke={3} />
+            <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700' }}>{t('onboarding.noPaymentNow')}</Text>
           </View>
+          <DelayedContinueButton
+            color={colors.accSolid}
+            textColor={colors.surface3}
+            shadowColor={paywallButtonShadow(colors)}
+            onPress={onNext}
+            label={t('onboarding.tryForZero')}
+            contentStyle={{ paddingVertical: 18, width: '100%' }}
+          />
+          <Text style={{ color: colors.textDim, fontSize: 15, lineHeight: 21, fontWeight: '500', textAlign: 'center' }}>
+            {t('onboarding.noCommitmentDisclaimer')}
+          </Text>
+          {onSignOutSession ? (
+            <TouchableOpacity onPress={onSignOutSession} activeOpacity={0.72} style={{ paddingVertical: 10 }}>
+              <Text style={{ color: colors.textDim, fontSize: 14, fontWeight: FONT.bold, textDecorationLine: 'underline' }}>
+                {t('onboarding.removeSession')}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          <PaywallLegalFooter colors={colors} onSignIn={onSignIn} />
         </View>
-      </View>
-
-      <View style={{ paddingBottom: 4 }}>
-        <DelayedContinueButton color="#050505" textColor="#FFFFFF" shadowColor="rgba(0,0,0,0.18)" onPress={onNext} label={t('onboarding.tryForZero')} contentStyle={{ paddingVertical: 17, minWidth: '100%' }} />
-      </View>
-    </View>
+      </PaywallBottomPanel>
+    </PaywallScreenContainer>
   );
 };
 
-export const Step31_TrialReminder = ({ onNext }: { onNext: () => void }) => {
+export const Step31_TrialReminder = ({ onNext, onSignIn }: { onNext: () => void; onSignIn?: () => void }) => {
   const { colors } = useColors();
   const { t } = useLanguage();
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg, paddingHorizontal: 24, paddingTop: 8 }]}> 
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: colors.text, fontSize: 28, lineHeight: 35, fontWeight: '900', textAlign: 'center', maxWidth: 335, marginBottom: 54 }}>
+    <PaywallScreenContainer colors={colors}>
+      <View style={{ flexShrink: 0, alignItems: 'center', paddingTop: 4, paddingHorizontal: 8 }}>
+        <Text style={{ color: colors.text, fontSize: 26, lineHeight: 32, fontWeight: '600', textAlign: 'center', maxWidth: 335 }}>
           {t('onboarding.trialReminderTitle')}
         </Text>
+      </View>
 
-        <View style={{ width: 156, height: 156, alignItems: 'center', justifyContent: 'center', marginBottom: 64 }}>
-          <Svg width={146} height={146} viewBox="0 0 146 146">
-            <Path d="M73 23 C53 23 39 39 39 61 L39 82 C39 89 34 95 28 99 L28 108 L118 108 L118 99 C112 95 107 89 107 82 L107 61 C107 39 93 23 73 23 Z" fill="#DDE8E7" />
-            <Path d="M60 115 C62 123 67 128 73 128 C79 128 84 123 86 115 Z" fill="#DDE8E7" />
-            <Path d="M64 22 C64 15 69 11 73 11 C77 11 82 15 82 22" fill="#DDE8E7" />
-          </Svg>
-          <View style={{ position: 'absolute', top: 22, right: 8, width: 66, height: 66, borderRadius: 33, backgroundColor: colors.accSolid, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#FFFFFF', fontSize: 38, lineHeight: 44, fontWeight: '900' }}>1</Text>
+      <View style={{ flex: 1, minHeight: 0, alignItems: 'center', justifyContent: 'center', paddingVertical: 16 }}>
+        <AnimatedTrialBell colors={colors} />
+      </View>
+
+      <PaywallBottomPanel colors={colors}>
+        <View style={{ width: '100%', alignItems: 'center', gap: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            <Icon name="check" size={22} color={colors.text} variant="outline" stroke={3} />
+            <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700' }}>{t('onboarding.noPaymentNow')}</Text>
           </View>
+          <DelayedContinueButton
+            color={colors.accSolid}
+            textColor={colors.surface3}
+            shadowColor={paywallButtonShadow(colors)}
+            onPress={onNext}
+            label={t('onboarding.continueFree')}
+            contentStyle={{ paddingVertical: 18, width: '100%' }}
+          />
+          <Text style={{ color: colors.textDim, fontSize: 15, lineHeight: 21, fontWeight: '500', textAlign: 'center' }}>
+            {t('onboarding.annualSmallPrice')}
+          </Text>
+          <PaywallLegalFooter colors={colors} onSignIn={onSignIn} />
         </View>
-      </View>
-
-      <View style={{ alignItems: 'center', paddingBottom: 4 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <Icon name="check" size={24} color={colors.text} variant="outline" stroke={3} />
-          <Text style={{ color: colors.text, fontSize: 17, fontWeight: '900' }}>{t('onboarding.noPaymentNow')}</Text>
-        </View>
-        <DelayedContinueButton color="#050505" textColor="#FFFFFF" shadowColor="rgba(0,0,0,0.18)" onPress={onNext} label={t('onboarding.continueFree')} contentStyle={{ paddingVertical: 14, minWidth: '100%' }} />
-        <Text style={{ color: colors.text, fontSize: 15, lineHeight: 21, fontWeight: FONT.bold, textAlign: 'center', marginTop: 12 }}>
-          {t('onboarding.annualSmallPrice')}
-        </Text>
-      </View>
-    </View>
+      </PaywallBottomPanel>
+    </PaywallScreenContainer>
   );
 };
 
-export const Step32_FinalPaywall = ({ onNext, onSignIn }: { onNext: () => void; onSignIn?: () => void }) => {
+export const Step32_FinalPaywall = ({ onNext, onSignIn, onDismiss }: { onNext: () => void; onSignIn?: () => void; onDismiss?: () => void }) => {
   const { colors } = useColors();
   const { session } = useAuth();
   const { t } = useLanguage();
-  const { annualPackage, monthlyPackage, purchasePlan, restorePurchases, loading: subscriptionLoading, error: subscriptionError } = useSubscription();
+  const { annualPackage, weeklyPackage, purchasePlan, restorePurchases, loading: subscriptionLoading, error: subscriptionError } = useSubscription();
   const [showPlans, setShowPlans] = useState(false);
-  const [plan, setPlan] = useState<'annual' | 'monthly'>('annual');
+  const [plan, setPlan] = useState<'annual' | 'weekly'>('annual');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const euro = String.fromCharCode(8364);
-  const isAnnual = plan === 'annual';
-  const annualPrice = annualPackage?.product.priceString || `30,99 ${euro}`;
-  const monthlyPrice = monthlyPackage?.product.priceString || `4,99 ${euro}`;
-  const legalTextColor = colors.textDim;
+  const purchasePlanKey = showPlans && plan === 'weekly' ? 'weekly' : 'annual';
+  const isTrialPurchase = isAnnualTrialPurchase(purchasePlanKey);
+  const annualPrice = resolveAnnualPriceString(annualPackage, euro);
+  const weeklyPrice = weeklyPackage?.product.priceString || `4,99 ${euro}`;
 
   const handlePay = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1917,9 +2429,13 @@ export const Step32_FinalPaywall = ({ onNext, onSignIn }: { onNext: () => void; 
     }
     setBusy(true);
     setMessage(null);
-    const result = await purchasePlan(plan);
+    const result = await purchasePlan(purchasePlanKey);
     setBusy(false);
-    if (!result.success && result.error) {
+    if (result.success) {
+      onNext();
+      return;
+    }
+    if (result.error) {
       setMessage(result.error);
     }
   };
@@ -1934,7 +2450,19 @@ export const Step32_FinalPaywall = ({ onNext, onSignIn }: { onNext: () => void; 
     setMessage(null);
     const result = await restorePurchases();
     setBusy(false);
-    setMessage(result.success ? t('onboarding.purchaseRestored') : result.error);
+    if (result.success) {
+      if (session?.user?.id) {
+        const hasName = await hasUserProfileName(session.user.id);
+        if (!hasName) {
+          onNext();
+          return;
+        }
+      }
+      requestAuthNavigationRefresh();
+      setMessage(t('onboarding.purchaseRestored'));
+      return;
+    }
+    setMessage(result.error);
   };
 
   const openLegalLink = (url: string) => {
@@ -1942,39 +2470,37 @@ export const Step32_FinalPaywall = ({ onNext, onSignIn }: { onNext: () => void; 
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg, paddingHorizontal: 24, paddingTop: 8 }]}>
+    <PaywallScreenContainer colors={colors}>
+      {onDismiss ? (
+        <TouchableOpacity
+          onPress={onDismiss}
+          activeOpacity={0.75}
+          style={{ position: 'absolute', top: 8, right: 12, zIndex: 10, width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Icon name="x" size={22} color={colors.textDim} stroke={3} />
+        </TouchableOpacity>
+      ) : null}
       <ScrollView
-        style={{ flex: 1, marginHorizontal: -24 }}
-        contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 6, paddingBottom: 22, alignItems: 'center' }}
-        showsVerticalScrollIndicator={false}
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 12, paddingTop: 4, alignItems: 'center', width: '100%' }}
+        showsVerticalScrollIndicator
       >
-        <Text style={{ color: colors.text, fontSize: 34, lineHeight: 40, fontWeight: '900', textAlign: 'center' }}>
-          {t('onboarding.threeDaysFree')}
-        </Text>
-        <Text style={{ color: colors.text, fontSize: 21, lineHeight: 28, fontWeight: '900', textAlign: 'center', marginTop: 12 }}>
-          {t('onboarding.thenMonthly')}
-        </Text>
-        <Text style={{ color: colors.textDim, fontSize: 14, lineHeight: 21, fontWeight: FONT.bold, textAlign: 'center', marginTop: 5, maxWidth: 300 }}>
-          {t('onboarding.billedAfterTrial', { price: annualPrice })}
-        </Text>
-
-        <View style={{ width: '100%', maxWidth: 330, borderRadius: 24, borderWidth: 2, borderColor: colors.hairline2, backgroundColor: colors.surface, paddingVertical: 24, paddingHorizontal: 20, marginTop: 42, alignItems: 'center' }}>
-          <Text style={{ color: colors.accSolid, fontSize: 34, lineHeight: 40, fontWeight: '900' }}>{t('onboarding.monthlyTimeSaved')}</Text>
-          <Text style={{ color: colors.text, fontSize: 18, lineHeight: 24, fontWeight: '900', textAlign: 'center', marginTop: 4 }}>
-            {t('onboarding.timeSavedBody')}
-          </Text>
-          <View style={{ height: 1, backgroundColor: colors.hairline2, alignSelf: 'stretch', marginVertical: 18 }} />
-          <Text style={{ color: colors.textDim, fontSize: 14, lineHeight: 20, fontWeight: FONT.bold, textAlign: 'center' }}>
-            {t('onboarding.alarmMissionStreak')}
-          </Text>
+        <View style={{ width: '100%', maxWidth: 340, alignItems: 'center', paddingHorizontal: 8 }}>
+          <PaywallTitleTwoLines
+            line1={t('onboarding.paywallTrialHeadlineLine1')}
+            line2={t('onboarding.paywallTrialHeadlineLine2')}
+            colors={colors}
+          />
+          <View style={{ height: 8 }} />
+          <PaywallTrialTimeline colors={colors} t={t} />
         </View>
 
-        {showPlans && (
-          <View style={{ width: '100%', gap: 10, marginTop: 18 }}>
+        {showPlans ? (
+          <View style={{ width: '100%', maxWidth: 340, gap: 10, marginTop: 18, paddingHorizontal: 8 }}>
             {[
-              { id: 'annual' as const, title: t('onboarding.annual'), subtitle: t('onboarding.annualPlanSubtitle', { price: annualPrice }), badge: t('onboarding.best') },
-              { id: 'monthly' as const, title: t('onboarding.monthly'), subtitle: t('onboarding.monthlyPlanSubtitle', { price: monthlyPrice }), badge: null },
-            ].map(item => {
+              { id: 'annual' as const, title: t('onboarding.annual'), subtitle: resolveAnnualPlanSubtitle(annualPackage, annualPrice, t), badge: t('onboarding.best') },
+              { id: 'weekly' as const, title: t('onboarding.weekly'), subtitle: t('onboarding.weeklyPlanSubtitle', { price: weeklyPrice }), badge: null },
+            ].map((item) => {
               const selected = plan === item.id;
               return (
                 <TouchableOpacity
@@ -1986,7 +2512,7 @@ export const Step32_FinalPaywall = ({ onNext, onSignIn }: { onNext: () => void; 
                     borderRadius: 16,
                     borderWidth: 2,
                     borderColor: selected ? colors.accSolid : colors.hairline2,
-                    backgroundColor: selected ? 'rgba(229,57,53,0.06)' : colors.surface,
+                    backgroundColor: selected ? colors.accGlow : colors.surface,
                     paddingHorizontal: 14,
                     paddingVertical: 9,
                     flexDirection: 'row',
@@ -1995,63 +2521,75 @@ export const Step32_FinalPaywall = ({ onNext, onSignIn }: { onNext: () => void; 
                   }}
                 >
                   <View style={{ width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: selected ? colors.accSolid : colors.hairline2, alignItems: 'center', justifyContent: 'center' }}>
-                    {selected && <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.accSolid }} />}
+                    {selected ? <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.accSolid }} /> : null}
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900' }} numberOfLines={1}>{item.title}</Text>
-                    <Text style={{ color: colors.textDim, fontSize: 12, lineHeight: 16, fontWeight: FONT.bold, marginTop: 1 }} numberOfLines={2}>{item.subtitle}</Text>
+                    <Text style={{ color: colors.text, fontSize: 15, fontWeight: '700' }} numberOfLines={1}>{item.title}</Text>
+                    <Text style={{ color: colors.textDim, fontSize: 12, lineHeight: 16, fontWeight: '600', marginTop: 1 }} numberOfLines={2}>{item.subtitle}</Text>
                   </View>
-                  {item.badge && (
+                  {item.badge ? (
                     <View style={{ backgroundColor: colors.accSolid, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
-                      <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '900' }}>{item.badge}</Text>
+                      <Text style={{ color: colors.surface3, fontSize: 10, fontWeight: '800' }}>{item.badge}</Text>
                     </View>
-                  )}
+                  ) : null}
                 </TouchableOpacity>
               );
             })}
           </View>
-        )}
-      </ScrollView>
+        ) : null}
 
-      <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 4, backgroundColor: colors.bg }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <Icon name="check" size={24} color={colors.text} variant="outline" stroke={3} />
-          <Text style={{ color: colors.text, fontSize: 17, fontWeight: '900' }}>{t('onboarding.noPayment')}</Text>
-        </View>
-        <SquishyButton color="#050505" shadowColor="rgba(0,0,0,0.18)" shadowDepth={5} onPress={handlePay} contentStyle={{ paddingVertical: 14, minWidth: '100%' }}>
-          {busy || subscriptionLoading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={[styles.btnText, { color: '#FFFFFF', fontSize: 17 }]}> 
-              {isAnnual ? t('onboarding.startFreeTrial') : t('onboarding.continue')}
-            </Text>
-          )}
-        </SquishyButton>
-        {!!(message || subscriptionError) && (
-          <Text style={{ color: colors.accSolid, fontSize: 12, lineHeight: 17, fontWeight: FONT.bold, textAlign: 'center', marginTop: 8, maxWidth: 310 }}>
-            {message || subscriptionError}
-          </Text>
-        )}
-        <TouchableOpacity onPress={() => setShowPlans(prev => !prev)} activeOpacity={0.72} style={{ paddingVertical: 13 }}>
-          <Text style={{ color: colors.text, fontSize: 16, fontWeight: '900', textDecorationLine: 'underline' }}>
+        <TouchableOpacity onPress={() => setShowPlans((prev) => !prev)} activeOpacity={0.72} style={{ alignSelf: 'center', paddingVertical: 14 }}>
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', textDecorationLine: 'underline' }}>
             {showPlans ? t('onboarding.hidePlans') : t('onboarding.seePlans')}
           </Text>
         </TouchableOpacity>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-          <TouchableOpacity onPress={handleRestore} activeOpacity={0.72} disabled={busy}>
-            <Text style={{ color: legalTextColor, fontSize: 12, fontWeight: FONT.bold, textDecorationLine: 'underline' }}>{t('settingsScreen.restorePurchase')}</Text>
-          </TouchableOpacity>
-          <Text style={{ color: legalTextColor, fontSize: 12 }}>•</Text>
-          <TouchableOpacity onPress={() => openLegalLink(LEGAL_LINKS.privacy)} activeOpacity={0.72}>
-            <Text style={{ color: legalTextColor, fontSize: 12, fontWeight: FONT.bold, textDecorationLine: 'underline' }}>{t('settingsScreen.privacy')}</Text>
-          </TouchableOpacity>
-          <Text style={{ color: legalTextColor, fontSize: 12 }}>•</Text>
-          <TouchableOpacity onPress={() => openLegalLink(LEGAL_LINKS.terms)} activeOpacity={0.72}>
-            <Text style={{ color: legalTextColor, fontSize: 12, fontWeight: FONT.bold, textDecorationLine: 'underline' }}>{t('settingsScreen.terms')}</Text>
-          </TouchableOpacity>
+      </ScrollView>
+
+      <PaywallBottomPanel colors={colors}>
+        <View style={{ width: '100%', alignItems: 'center', gap: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            <Icon name="check" size={22} color={colors.text} variant="outline" stroke={3} />
+            <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700' }}>{t('onboarding.noPaymentNow')}</Text>
+          </View>
+          <SquishyButton
+            color={colors.accSolid}
+            shadowColor={paywallButtonShadow(colors)}
+            shadowDepth={5}
+            onPress={handlePay}
+            style={{ width: '100%' }}
+            contentStyle={{ paddingVertical: 18, width: '100%', alignItems: 'center', justifyContent: 'center' }}
+          >
+            {busy || subscriptionLoading ? (
+              <ActivityIndicator color={colors.surface3} />
+            ) : (
+              <Text style={[styles.btnText, { color: colors.surface3, fontSize: 17 }]}>
+                {isTrialPurchase ? t('onboarding.startFreeTrial') : t('onboarding.continue')}
+              </Text>
+            )}
+          </SquishyButton>
+          {isTrialPurchase ? (
+            <Text style={{ color: colors.textDim, fontSize: 13, lineHeight: 18, fontWeight: '500', textAlign: 'center' }}>
+              {t('onboarding.billedAfterTrial', { price: annualPrice })}
+            </Text>
+          ) : null}
+          {!!(message || subscriptionError) ? (
+            <Text style={{ color: colors.accSolid, fontSize: 12, lineHeight: 17, fontWeight: '600', textAlign: 'center' }}>
+              {message || subscriptionError}
+            </Text>
+          ) : null}
+          <PaywallLegalRow
+            colors={colors}
+            busy={busy}
+            onRestore={handleRestore}
+            onPrivacy={() => openLegalLink(LEGAL_LINKS.privacy)}
+            onTerms={() => openLegalLink(LEGAL_LINKS.terms)}
+            restoreLabel={t('onboarding.restoreShort')}
+            privacyLabel={t('onboarding.privacyShort')}
+            termsLabel={t('onboarding.termsShort')}
+          />
         </View>
-      </View>
-    </View>
+      </PaywallBottomPanel>
+    </PaywallScreenContainer>
   );
 };
 
@@ -2059,15 +2597,154 @@ export const ONBOARDING_STEPS = [
   Step1_Loading, Step2_Value, Step3_Thought, Step4_BedReason, Step5_UsualTime,
   Step6_SnoozeFreq, Step7_AlarmCount, Step8_Biology, Step9_Chart, Step10_OneAlarm, Step11_Temple,
   Step12_PhysicalAction, Step13_WakeFeeling, Step14_MissionMode, Step15_MissionConfig, Step16_AwakeTime,
-  Step17_TargetTime, Step18_ProtectedDays, Step18b_GoalSummary, Step19_SoundSettings, Step20_ThePact,
-  Step29_Processing, Step28b_MorningPlan, Step30_TrialIntro, Step31_TrialReminder, Step32_FinalPaywall
+  Step17_TargetTime, Step18_ProtectedDays, Step18b_GoalSummary, Step20_ThePact,
+  Step28b_MorningPlan, Step27_Auth, Step23_PaywallChart,
+  Step30_TrialIntro, Step31_TrialReminder, Step32_FinalPaywall,
+  Step28_FinalForm, Step29_Processing,
 ];
 
-export const PAYWALL_START_STEP = ONBOARDING_STEPS.findIndex(Component => Component.name === 'Step30_TrialIntro');
+export const PAYWALL_FLOW_STEPS = [Step30_TrialIntro, Step31_TrialReminder, Step32_FinalPaywall];
+
+export const MORNING_PLAN_STEP = ONBOARDING_STEPS.findIndex(
+  (Component) => Component.name === 'Step28b_MorningPlan'
+);
+export const AUTH_ONBOARDING_STEP = ONBOARDING_STEPS.findIndex(
+  (Component) => Component.name === 'Step27_Auth'
+);
+export const CHART_STEP = ONBOARDING_STEPS.findIndex(
+  (Component) => Component.name === 'Step23_PaywallChart'
+);
+export const POST_PAY_PROFILE_STEP = ONBOARDING_STEPS.findIndex(
+  (Component) => Component.name === 'Step28_FinalForm'
+);
+export const PAYWALL_START_STEP = ONBOARDING_STEPS.findIndex(
+  (Component) => Component.name === 'Step30_TrialIntro'
+);
+export const FIRST_ONBOARDING_STEP = 1;
+export const DIRECT_PAYWALL_STEP = ONBOARDING_STEPS.length - 3;
 
 const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 24, paddingTop: 16, paddingBottom: 24, justifyContent: 'space-between' },
+  paywallScreen: { flex: 1, paddingHorizontal: 24, paddingBottom: 0 },
   centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  readingPhraseIcon: { alignItems: 'center', justifyContent: 'center', marginBottom: 28 },
+  readingPhraseBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 4,
+  },
+  phraseStack: {
+    minHeight: 220,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  phraseLayer: {
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: 36,
+  },
+  habitFooterNote: {
+    fontSize: 15,
+    lineHeight: 22,
+    fontFamily: FONT_FAMILY.semiBold,
+    textAlign: 'center',
+    marginBottom: 12,
+    paddingHorizontal: 8,
+  },
+  templeFooter: {
+    paddingHorizontal: 24,
+    paddingBottom: 10,
+    paddingTop: 4,
+  },
+  chartScreen: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
+  chartTitle: {
+    marginBottom: 0,
+    paddingHorizontal: 24,
+    fontSize: 30,
+    textAlign: 'center',
+    alignSelf: 'center',
+    paddingTop: 8,
+  },
+  chartBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  chartFooter: {
+    paddingHorizontal: 24,
+    paddingBottom: 10,
+    paddingTop: 4,
+  },
+  chartCompareWrap: { alignSelf: 'center', width: '100%', maxWidth: 348, paddingHorizontal: 8 },
+  chartHeadersRow: { flexDirection: 'row', marginBottom: 22, paddingHorizontal: 0 },
+  chartHeaderLabel: { flex: 1, textAlign: 'center', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  chartColumnsRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-start', gap: 20 },
+  chartColumn: { flex: 1, maxWidth: 164, alignItems: 'center' },
+  chartTrack: { position: 'relative', alignSelf: 'center' },
+  chartTrackRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 36, zIndex: 2 },
+  chartDotCol: { width: 28, alignItems: 'center', zIndex: 2 },
+  chartLabelCol: { marginLeft: 10, width: 78 },
+  chartDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFA000',
+  },
+  chartZigzagLine: { position: 'absolute', top: 14, left: 0, width: 28, zIndex: 0 },
+  chartLeftSpacer: { height: 20 },
+  chartRooLine: {
+    position: 'absolute',
+    left: 12.75,
+    top: 14,
+    width: 3,
+    backgroundColor: '#34C759',
+    borderRadius: 2,
+    zIndex: 0,
+  },
+  chartBadgeSection: {
+    marginTop: 0,
+    alignSelf: 'flex-start',
+    zIndex: 2,
+  },
+  chartBadgeSpine: {
+    width: 28,
+    alignItems: 'center',
+  },
+  chartBadge: {
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 11,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#34C759',
+    width: 84,
+  },
+  chartBadgeTopRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  chartBadgeNumber: { color: '#28A745', fontWeight: '900', fontSize: 20, lineHeight: 22 },
+  chartBadgeMin: { color: '#28A745', fontWeight: '900', fontSize: 9, letterSpacing: 0.8, lineHeight: 12 },
+  chartBadgeLabel: {
+    color: '#28A745',
+    fontWeight: '800',
+    fontSize: 8,
+    marginTop: 2,
+    letterSpacing: 0.6,
+    textAlign: 'center',
+    lineHeight: 10,
+  },
   rooPlaceholder: { justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderStyle: 'dashed', borderColor: '#ccc' },
   title: { fontSize: 28, fontWeight: '800', textAlign: 'center' },
   optionBtn: { paddingVertical: 16, paddingHorizontal: 20, borderRadius: 16, borderWidth: 2, alignItems: 'center', marginHorizontal: 8 },

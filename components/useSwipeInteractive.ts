@@ -19,7 +19,7 @@ export const useSwipeInteractive = (isVisible: boolean, onCloseAction: () => voi
   const panResponder = React.useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_, gestureState) => gestureState.dy > 15 && scrollY.current <= 0,
-    onMoveShouldSetPanResponderCapture: (_, gestureState) => gestureState.dy > 15 && scrollY.current <= 0,
+    onMoveShouldSetPanResponderCapture: () => false,
     onPanResponderMove: (_, gestureState) => {
       if (gestureState.dy > 0) {
         panY.setValue(gestureState.dy);

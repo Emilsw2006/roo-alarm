@@ -65,8 +65,8 @@ export default function SwipeBegin({ onComplete, label = 'Swipe to begin', color
   return (
     <View style={[styles.track, { borderColor: color || 'rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.05)' }]} onLayout={onLayout}>
       <Animated.View style={[styles.labelContainer, { opacity: labelOpacity }]}>
-        <Text style={[styles.label, { color: color || 'rgba(255,255,255,0.4)' }]}>{label}</Text>
-        <Icon name="chevR" size={16} color={color || 'rgba(255,255,255,0.4)'} />
+        <Text style={styles.label}>{label}</Text>
+        <Icon name="chevR" size={16} color="rgba(255,255,255,0.55)" />
       </Animated.View>
       <Animated.View
         {...panResponder.panHandlers}
@@ -105,6 +105,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 16,
     fontWeight: FONT.medium,
+    color: 'rgba(255,255,255,0.55)',
   },
   thumb: {
     position: 'absolute',

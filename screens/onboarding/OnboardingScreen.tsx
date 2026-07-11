@@ -1,16 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Animated, SafeAreaView, Easing, TouchableOpacity, Dimensions, BackHandler } from 'react-native';
+import { View, StyleSheet, Animated, SafeAreaView, Easing, TouchableOpacity, Dimensions, BackHandler, Text, ActivityIndicator, Alert } from 'react-native';
 import { useColors } from '../../constants/ThemeContext';
-import { ONBOARDING_STEPS } from './OnboardingSteps';
+import { useSubscription } from '../../constants/SubscriptionContext';
+import { useAuth } from '../../constants/AuthContext';
+import { useOnboarding } from '../../constants/OnboardingContext';
+import { ONBOARDING_STEPS, FIRST_ONBOARDING_STEP, PAYWALL_START_STEP, DIRECT_PAYWALL_STEP } from './OnboardingSteps';
+import { requestAuthNavigationRefresh } from '../../lib/authNavigationRefresh';
+import { fetchSubscriptionFromSupabase } from '../../lib/subscriptionSupabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from '../../components/Icon';
 import LanguageFlagButton from '../../components/LanguageFlagButton';
+import { FONT_FAMILY } from '../../constants/theme';
 
 const { width } = Dimensions.get('window');
+const premiumFlagKey = (userId: string) => `rooalarm.premium.${userId}`;
 
 export default function OnboardingScreen({ navigation, route }: { navigation: any; route?: any }) {
   const { colors } = useColors();
-  const initialStep = Math.min(route?.params?.initialStep ?? 1, ONBOARDING_STEPS.length - 1);
+  const { hasPremiumAccess, grantDevScreenshotAccess } = useSubscription();
+  const { session, signOut } = useAuth();
+  const { resetData } = useOnboarding();
+  const initialStep = Math.min(route?.params?.initialStep ?? FIRST_ONBOARDING_STEP, ONBOARDING_STEPS.length - 1);
   const [step, setStep] = useState(initialStep);
+  const [devScreenshotBusy, setDevScreenshotBusy] = useState(false);
+
+  useEffect(() => {
+    const nextStep = Math.min(route?.params?.initialStep ?? FIRST_ONBOARDING_STEP, ONBOARDING_STEPS.length - 1);
+    setStep(nextStep);
+  }, [route?.params?.initialStep]);
   
   // Animación de la barra de progreso superior
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -19,6 +36,65 @@ export default function OnboardingScreen({ navigation, route }: { navigation: an
   const translateX = useRef(new Animated.Value(0)).current;
   const processingStepIndex = ONBOARDING_STEPS.findIndex(Component => Component.name === 'Step29_Processing');
   const isLockedProcessingStep = step === processingStepIndex;
+  const isPaywallStep = step >= PAYWALL_START_STEP;
+  const isFinalPaywallStep = step === DIRECT_PAYWALL_STEP;
+
+  const goToLoginForPaywall = () => {
+    navigation.navigate('Login', { existingAccount: true, resumePaywall: true });
+  };
+
+  const goToLogin = () => {
+    navigation.navigate('Login', { existingAccount: true });
+  };
+
+  const handlePaywallDismiss = () => {
+    setStep(PAYWALL_START_STEP);
+  };
+
+  const handleSignOutSession = async () => {
+    const userId = session?.user?.id;
+    if (userId) {
+      const [localFlag, dbSub] = await Promise.all([
+        AsyncStorage.getItem(premiumFlagKey(userId)),
+        fetchSubscriptionFromSupabase(userId),
+      ]);
+      const isSubscribed =
+        hasPremiumAccess || localFlag === '1' || dbSub?.is_subscribed === true;
+      if (isSubscribed) {
+        requestAuthNavigationRefresh();
+        return;
+      }
+    }
+
+    resetData();
+    setStep(FIRST_ONBOARDING_STEP);
+    await signOut();
+    requestAuthNavigationRefresh();
+  };
+
+  const handleDevScreenshotHome = async () => {
+    if (!__DEV__ || devScreenshotBusy) return;
+    setDevScreenshotBusy(true);
+    const result = await grantDevScreenshotAccess();
+    setDevScreenshotBusy(false);
+    if (!result.success && result.error) {
+      Alert.alert('DEV', result.error);
+    }
+  };
+
+  useEffect(() => {
+    if (!isPaywallStep || hasPremiumAccess || isFinalPaywallStep) return;
+    const unsubscribe = navigation.addListener('beforeRemove', (event: any) => {
+      event.preventDefault();
+    });
+    return unsubscribe;
+  }, [hasPremiumAccess, isFinalPaywallStep, isPaywallStep, navigation]);
+
+  useEffect(() => {
+    navigation.setOptions({
+      gestureEnabled: !isPaywallStep && !isLockedProcessingStep,
+    });
+  }, [isLockedProcessingStep, isPaywallStep, navigation]);
 
   useEffect(() => {
     // Animar la barra de progreso
@@ -30,11 +106,11 @@ export default function OnboardingScreen({ navigation, route }: { navigation: an
   }, [step]);
 
   useEffect(() => {
-    if (!isLockedProcessingStep) return;
+    if (!isLockedProcessingStep && !isPaywallStep) return;
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => true);
     return () => subscription.remove();
-  }, [isLockedProcessingStep]);
+  }, [isLockedProcessingStep, isPaywallStep]);
 
   const handleNext = () => {
     if (step < ONBOARDING_STEPS.length - 1) {
@@ -55,12 +131,11 @@ export default function OnboardingScreen({ navigation, route }: { navigation: an
           ]).start();
         }, 50);
       });
-    } else {
-      navigation.navigate('Welcome');
     }
   };
 
   const handleBack = () => {
+    if (step >= PAYWALL_START_STEP) return;
     if (step > initialStep) {
       // Salida hacia la derecha
       Animated.parallel([
@@ -94,7 +169,7 @@ export default function OnboardingScreen({ navigation, route }: { navigation: an
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: colors.bg }]}>
-      {!isLockedProcessingStep && (
+      {!isLockedProcessingStep && !isPaywallStep && (
         <View style={[styles.header, { paddingTop: 34 }]}>
           {step > initialStep ? (
             <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
@@ -111,11 +186,32 @@ export default function OnboardingScreen({ navigation, route }: { navigation: an
         </View>
       )}
 
-      <Animated.View style={[styles.contentContainer, { opacity: fadeAnim, transform: [{ translateX }] }]}>
-        <CurrentStepComponent onNext={handleNext} onSignIn={() => navigation.navigate('Login')} />
+      <Animated.View key={step} style={[styles.contentContainer, { opacity: fadeAnim, transform: [{ translateX }] }]}>
+        <CurrentStepComponent
+          onNext={handleNext}
+          onSignUp={() => navigation.navigate('SignUp', { fromOnboarding: true })}
+          onSignIn={isPaywallStep ? goToLoginForPaywall : goToLogin}
+          onDismiss={isFinalPaywallStep && !hasPremiumAccess ? handlePaywallDismiss : undefined}
+          onSignOutSession={step === PAYWALL_START_STEP && session ? handleSignOutSession : undefined}
+        />
       </Animated.View>
 
-      {step === initialStep && initialStep <= 1 && <LanguageFlagButton />}
+      {step === initialStep && initialStep <= FIRST_ONBOARDING_STEP && <LanguageFlagButton />}
+
+      {__DEV__ && isPaywallStep && !hasPremiumAccess ? (
+        <TouchableOpacity
+          onPress={handleDevScreenshotHome}
+          activeOpacity={0.8}
+          style={[styles.devScreenshotBtn, { backgroundColor: colors.text }]}
+          disabled={devScreenshotBusy}
+        >
+          {devScreenshotBusy ? (
+            <ActivityIndicator color={colors.bg} size="small" />
+          ) : (
+            <Text style={[styles.devScreenshotText, { color: colors.bg }]}>DEV → Home</Text>
+          )}
+        </TouchableOpacity>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -151,5 +247,23 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-  }
+  },
+  devScreenshotBtn: {
+    position: 'absolute',
+    top: 54,
+    left: 16,
+    zIndex: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    minWidth: 108,
+    alignItems: 'center',
+    justifyContent: 'center',
+    opacity: 0.88,
+  },
+  devScreenshotText: {
+    fontSize: 12,
+    fontFamily: FONT_FAMILY.bold,
+    letterSpacing: 0.2,
+  },
 });

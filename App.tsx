@@ -1,12 +1,17 @@
-import { NavigationContainer } from '@react-navigation/native';
+import { useEffect, useState } from 'react';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { ThemeProvider } from './constants/ThemeContext';
 import { LanguageProvider } from './constants/LanguageContext';
-import { AuthProvider } from './constants/AuthContext';
+import { AuthProvider, useAuth } from './constants/AuthContext';
 import { OnboardingProvider } from './constants/OnboardingContext';
 import { SubscriptionProvider } from './constants/SubscriptionContext';
 import AppNavigator from './navigation/AppNavigator';
-import { LogBox } from 'react-native';
+import { LogBox, Platform, AppState } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppLoadingScreen from './components/AppLoadingScreen';
+import { useAlarmKitLaunchNavigation } from './hooks/useAlarmKitLaunchNavigation';
+import { useOnboardingPersistence } from './hooks/useOnboardingPersistence';
+import { useGlobalAlarmTrigger } from './hooks/useGlobalAlarmTrigger';
 import {
   useFonts,
   Nunito_400Regular,
@@ -16,9 +21,15 @@ import {
   Nunito_800ExtraBold,
   Nunito_900Black,
 } from '@expo-google-fonts/nunito';
+import { configureAlarmNotifications, capturePendingAlarmLaunch, requestAlarmPermissions, refreshUserAlarmSchedules } from './lib/alarmScheduler';
+
+export const navigationRef = createNavigationContainerRef<any>();
+
 LogBox.ignoreLogs([
   'VirtualizedLists should never be nested inside plain ScrollViews',
   '[expo-av]: Expo AV has been deprecated',
+  'Error configuring Purchases',
+  '[RevenueCat]',
 ]);
 
 const originalWarn = console.warn;
@@ -29,11 +40,80 @@ console.warn = (...args) => {
 
 const originalError = console.error;
 console.error = (...args) => {
-  if (typeof args[0] === 'string' && args[0].includes('VirtualizedLists')) return;
+  const first = typeof args[0] === 'string' ? args[0] : '';
+  if (
+    first.includes('VirtualizedLists') ||
+    first.includes('Error configuring Purchases') ||
+    first.includes('Invalid API key') ||
+    first.includes('[RevenueCat]')
+  ) {
+    return;
+  }
   originalError(...args);
 };
 
+function AlarmPermissionsBridge() {
+  const { session } = useAuth();
+  useEffect(() => {
+    if (!session?.user) return;
+    requestAlarmPermissions().catch(() => {});
+  }, [session?.user?.id]);
+  return null;
+}
+
+function AlarmForegroundSyncBridge() {
+  const { session } = useAuth();
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId) return;
+
+    const sync = () => {
+      void refreshUserAlarmSchedules(userId).catch((err) => {
+        console.warn('[RooAlarm] Foreground alarm sync failed', err);
+      });
+    };
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') sync();
+    });
+
+    return () => subscription.remove();
+  }, [session?.user?.id]);
+  return null;
+}
+
+function OnboardingPersistenceBridge() {
+  useOnboardingPersistence();
+  return null;
+}
+
+function GlobalAlarmBridge() {
+  const { session } = useAuth();
+  const alarmFlowEnabled = !!session?.user;
+  useGlobalAlarmTrigger(navigationRef, session?.user?.id ?? null, alarmFlowEnabled);
+  return null;
+}
+
+function AlarmKitLaunchBridge() {
+  const { session } = useAuth();
+  const alarmFlowEnabled = !!session?.user;
+  useAlarmKitLaunchNavigation(
+    navigationRef,
+    Platform.OS === 'ios',
+    session?.user?.id ?? null,
+    alarmFlowEnabled
+  );
+  return null;
+}
+
 export default function App() {
+  useEffect(() => {
+    configureAlarmNotifications().catch(() => {});
+    if (Platform.OS === 'ios') {
+      capturePendingAlarmLaunch().catch(() => {});
+    }
+  }, []);
+
   const [fontsLoaded] = useFonts({
     Nunito_400Regular,
     Nunito_500Medium,
@@ -43,23 +123,41 @@ export default function App() {
     Nunito_900Black,
   });
 
-  if (!fontsLoaded) {
+  const [fontsReady, setFontsReady] = useState(false);
+
+  useEffect(() => {
+    if (fontsLoaded) {
+      setFontsReady(true);
+      return;
+    }
+    const timeoutId = setTimeout(() => setFontsReady(true), 1200);
+    return () => clearTimeout(timeoutId);
+  }, [fontsLoaded]);
+
+  if (!fontsReady) {
     return <AppLoadingScreen />;
   }
 
   return (
-    <LanguageProvider>
-      <AuthProvider>
-        <SubscriptionProvider>
-          <ThemeProvider>
-            <OnboardingProvider>
-              <NavigationContainer>
-                <AppNavigator />
-              </NavigationContainer>
-            </OnboardingProvider>
-          </ThemeProvider>
-        </SubscriptionProvider>
-      </AuthProvider>
-    </LanguageProvider>
+    <SafeAreaProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <SubscriptionProvider>
+            <ThemeProvider>
+              <OnboardingProvider>
+                <NavigationContainer ref={navigationRef}>
+                  <OnboardingPersistenceBridge />
+                  <AlarmPermissionsBridge />
+                  <AlarmForegroundSyncBridge />
+                  <GlobalAlarmBridge />
+                  <AlarmKitLaunchBridge />
+                  <AppNavigator />
+                </NavigationContainer>
+              </OnboardingProvider>
+            </ThemeProvider>
+          </SubscriptionProvider>
+        </AuthProvider>
+      </LanguageProvider>
+    </SafeAreaProvider>
   );
 }

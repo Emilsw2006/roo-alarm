@@ -9,8 +9,13 @@ import { useLanguage } from '../constants/LanguageContext';
 import { FONT } from '../constants/theme';
 import { getMission } from '../constants/missions';
 import Icon from '../components/Icon';
-import SquishyButton from '../components/SquishyButton';
+import MissionRescuePrompt from '../components/MissionRescuePrompt';
 import { supabase } from '../lib/supabase';
+import { finishMissionTimeout, onMissionTimerExpired } from '../lib/missionTimeout';
+import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
+import { useAuth } from '../constants/AuthContext';
+import { isGeminiMissionVerifyEnabled } from '../lib/geminiConfig';
+import { verifyMissionPhoto } from '../lib/verifyMissionPhoto';
 
 interface CameraScreenProps {
   navigation: any;
@@ -34,7 +39,8 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
   const alarm = route.params?.alarm;
   const missionExpiresAt = route.params?.missionExpiresAt;
   const insets = useSafeAreaInsets();
-  const { colors, rescueTokens, setRescueTokens } = useColors();
+  const { rescueTokens, setRescueTokens } = useColors();
+  const { user } = useAuth();
   const { t, missionCopy } = useLanguage();
   const [phase, setPhase] = useState<'frame' | 'analyzing' | 'success' | 'incorrect'>('frame');
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
@@ -44,7 +50,19 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
   const cameraRef = useRef<any>(null);
   const [failCount, setFailCount] = useState(0);
   const [showRescuePrompt, setShowRescuePrompt] = useState(false);
+  const [rescueReason, setRescueReason] = useState<'fail' | 'timeout' | null>(null);
   const phaseRef = useRef(phase);
+  const timeoutHandledRef = useRef(false);
+  const rescueTokensRef = useRef(rescueTokens);
+  const showRescuePromptRef = useRef(showRescuePrompt);
+
+  useEffect(() => {
+    rescueTokensRef.current = rescueTokens;
+  }, [rescueTokens]);
+
+  useEffect(() => {
+    showRescuePromptRef.current = showRescuePrompt;
+  }, [showRescuePrompt]);
 
   const mission = getMission(alarm?.mission);
   const availableFrameSpace = height - insets.top - insets.bottom - 260;
@@ -62,6 +80,25 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
     phaseRef.current = phase;
   }, [phase]);
 
+  const triggerTimeoutFlow = () => {
+    if (timeoutHandledRef.current || phaseRef.current === 'success') return;
+
+    void (async () => {
+      const outcome = await onMissionTimerExpired(
+        { isDaily, alarm },
+        user?.id,
+        rescueTokensRef.current,
+      );
+      if (outcome === 'rescue') {
+        setRescueReason('timeout');
+        setShowRescuePrompt(true);
+        return;
+      }
+      timeoutHandledRef.current = true;
+      await finishMissionTimeout(navigation, { isDaily, alarm }, user?.id, { skipRetrigger: true });
+    })();
+  };
+
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 350, useNativeDriver: true }).start();
 
@@ -75,13 +112,13 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
       }
       setTimeLeft(next);
       if (next === 0) {
-        if (phaseRef.current === 'analyzing' || phaseRef.current === 'success') return;
+        if (phaseRef.current === 'success') return;
         clearInterval(interval);
-        navigation.replace('AlarmUnlock', { isDaily, alarm });
+        triggerTimeoutFlow();
       }
     }, 250);
     return () => clearInterval(interval);
-  }, [missionExpiresAt, navigation, isDaily, alarm]);
+  }, [missionExpiresAt, navigation, isDaily, alarm, user?.id]);
 
   useEffect(() => {
     if (phase === 'analyzing') {
@@ -123,24 +160,33 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
 
   const handleCapture = async () => {
     if (timeLeft <= 0) {
-      navigation.replace('AlarmUnlock', { isDaily, alarm });
+      triggerTimeoutFlow();
       return;
     }
 
+    let photoUri: string | null = null;
+    let photoBase64: string | null = null;
+
     try {
-      const photo = await cameraRef.current?.takePictureAsync({ quality: 0.65, skipProcessing: true });
-      if (photo?.uri) setCapturedUri(photo.uri);
+      const photo = await cameraRef.current?.takePictureAsync({
+        quality: 0.8,
+        skipProcessing: true,
+        base64: true,
+      });
+      photoUri = photo?.uri ?? null;
+      photoBase64 = photo?.base64 ?? null;
+      if (photoUri) setCapturedUri(photoUri);
     } catch (e) {
       console.log('Capture error', e);
     }
 
     setPhase('analyzing');
-    setTimeout(() => {
+
+    const finishWithResult = (willPass: boolean) => {
       const nextFailCount = failCount + 1;
-      const willPass = !isDaily || failCount >= 2;
 
       if (!willPass && missionExpiresAt && Date.now() >= missionExpiresAt) {
-        navigation.replace('AlarmUnlock', { isDaily, alarm });
+        triggerTimeoutFlow();
         return;
       }
 
@@ -150,7 +196,10 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
         setFailCount(nextFailCount);
 
         if (nextFailCount === 2 && rescueTokens > 0) {
-          setTimeout(() => setShowRescuePrompt(true), 1500);
+          setTimeout(() => {
+            setRescueReason('fail');
+            setShowRescuePrompt(true);
+          }, 1500);
         } else {
           setTimeout(() => {
             setCapturedUri(null);
@@ -160,25 +209,62 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setPhase('success');
-        setTimeout(() => navigation.navigate('Success', { isDaily }), 1250);
+        void finalizeAlarmSuccess(alarm, user?.id);
+        setTimeout(() => navigation.replace('Success', { isDaily, alarm }), 1250);
       }
-    }, 3200);
+    };
+
+    if (isGeminiMissionVerifyEnabled() && photoBase64) {
+      try {
+        const copy = missionCopy(mission.id);
+        const result = await verifyMissionPhoto({
+          missionId: mission.id,
+          missionLabel: copy.label,
+          missionHint: copy.hint,
+          missionEmoji: mission.emoji,
+          imageBase64: photoBase64,
+        });
+
+        if (result.unavailable) {
+          console.log('Gemini unavailable, using fallback verify', result.reason);
+        } else {
+          finishWithResult(result.passed);
+          return;
+        }
+      } catch (error) {
+        console.log('Gemini mission verify error', error);
+      }
+    }
+
+    setTimeout(() => {
+      const willPass = !isDaily || failCount >= 2;
+      finishWithResult(willPass);
+    }, 2200);
   };
 
   const handleUseToken = async () => {
-    if (rescueTokens > 0) {
-      setRescueTokens(rescueTokens - 1);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        await supabase.from('user_settings').update({ rescue_tokens: rescueTokens - 1 }).eq('user_id', user.id);
-      }
-      setShowRescuePrompt(false);
-      navigation.navigate('Success', { isDaily });
+    if (rescueTokens <= 0) return;
+    timeoutHandledRef.current = true;
+    setRescueTokens(rescueTokens - 1);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await supabase.from('user_settings').update({ rescue_tokens: rescueTokens - 1 }).eq('user_id', user.id);
     }
+    setShowRescuePrompt(false);
+    setRescueReason(null);
+    void finalizeAlarmSuccess(alarm, user?.id);
+    navigation.replace('Success', { isDaily, alarm });
   };
 
   const handleKeepTrying = () => {
+    const wasTimeout = rescueReason === 'timeout';
     setShowRescuePrompt(false);
+    setRescueReason(null);
+    if (wasTimeout) {
+      timeoutHandledRef.current = true;
+      void finishMissionTimeout(navigation, { isDaily, alarm }, user?.id, { skipRetrigger: true });
+      return;
+    }
     setCapturedUri(null);
     setPhase('frame');
   };
@@ -217,7 +303,7 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
         <View style={styles.viewfinderOverlay} />
       </View>
 
-      <View style={[styles.topBar, { paddingTop: insets.top + 34 }]}>
+      <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
         <View style={styles.missionHeader}>
           <Text style={styles.missionEmoji}>{mission.emoji}</Text>
           <View style={{ flex: 1 }}>
@@ -303,34 +389,13 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
         <View style={{ width: 50, height: 50 }} />
       </View>
 
-      {showRescuePrompt && (
-        <View style={[StyleSheet.absoluteFill, styles.rescueOverlay]}>
-          <View style={[styles.rescueCard, { backgroundColor: colors.surface }]}>
-            <View style={styles.rescueIcon}>
-              <Icon name="sparkle" size={32} color="#FFB000" variant="solid" />
-            </View>
-            <Text style={{ fontSize: 24, fontWeight: '800', color: colors.text, marginBottom: 12, textAlign: 'center' }}>{t('camera.secondFail')}</Text>
-            <Text style={{ fontSize: 16, color: colors.textDim, textAlign: 'center', marginBottom: 32, lineHeight: 24 }}>
-              {t('camera.failBody')}
-            </Text>
-
-            <View style={{ width: '100%', gap: 12 }}>
-              <SquishyButton
-                color="#FFB000"
-                shadowColor="rgba(255, 176, 0, 0.3)"
-                onPress={handleUseToken}
-                contentStyle={{ height: 56, alignItems: 'center', justifyContent: 'center' }}
-              >
-                <Text style={{ fontSize: 17, fontWeight: '700', color: '#000' }}>{t('camera.useToken', { count: rescueTokens })}</Text>
-              </SquishyButton>
-
-              <TouchableOpacity onPress={handleKeepTrying} style={{ height: 56, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontSize: 16, fontWeight: '600', color: colors.textDim }}>{t('camera.repeatPhoto')}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
+      <MissionRescuePrompt
+        visible={showRescuePrompt}
+        tokens={rescueTokens}
+        variant={rescueReason === 'timeout' ? 'timeout' : 'fail'}
+        onUseToken={handleUseToken}
+        onDecline={handleKeepTrying}
+      />
     </Animated.View>
   );
 }
@@ -365,7 +430,4 @@ const styles = StyleSheet.create({
   shutterOuter: { width: 92, height: 92, borderRadius: 46, borderWidth: 5, borderColor: '#fff', padding: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
   shutterInner: { width: '100%', height: '100%', borderRadius: 33, backgroundColor: '#FFFFFF' },
   shutterDisabled: { opacity: 0.58 },
-  rescueOverlay: { backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 10, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  rescueCard: { padding: 32, borderRadius: 36, width: '100%', alignItems: 'center' },
-  rescueIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255, 176, 0, 0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
 });

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { View, StyleSheet, PanResponder, TouchableOpacity, Text } from 'react-native';
+import { View, StyleSheet, PanResponder, TouchableOpacity, Text, type DimensionValue } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useColors } from '../constants/ThemeContext';
 import * as Haptics from 'expo-haptics';
@@ -7,7 +7,7 @@ import * as Haptics from 'expo-haptics';
 interface SignaturePadProps {
   onOK: (signatureExists: boolean) => void;
   onClear?: () => void;
-  width?: number | string;
+  width?: DimensionValue;
   height?: number;
 }
 

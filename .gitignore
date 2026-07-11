@@ -37,6 +37,7 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
 
 # typescript
@@ -52,3 +53,7 @@ App design.zip
 
 # AI / Gemini / Claude config
 .claude/
+.mcp.json
+
+# Supabase CLI temp
+supabase/.temp/

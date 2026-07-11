@@ -9,9 +9,14 @@
     "scheme": "rooalarm",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.rooalarm.app",
+      "bundleIdentifier": "com.roo.alarm",
+      "buildNumber": "1",
+      "appleTeamId": "YW6HVLQ9JV",
+      "usesAppleSignIn": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "RooAlarm usa la cámara solo para validar misiones de despertar, como hacer una foto del cielo o de un objeto elegido."
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "RooAlarm usa la cámara solo para validar misiones de despertar, como hacer una foto del cielo o de un objeto elegido.",
+        "NSAlarmKitUsageDescription": "RooAlarm usa alarmas del sistema para despertarte a la hora exacta y ejecutar tu misión."
       }
     },
     "android": {
@@ -31,6 +36,7 @@
       "expo-font",
       "expo-secure-store",
       "expo-web-browser",
+      "expo-apple-authentication",
       "expo-audio",
       "expo-video",
       [
@@ -38,7 +44,11 @@
         {
           "cameraPermission": "RooAlarm usa la cámara solo para validar misiones de despertar."
         }
-      ]
+      ],
+      "expo-notifications",
+      "expo-asset",
+      "./plugins/withAlarmKit.js",
+      "./plugins/withStoreKit.js"
     ]
   }
 }

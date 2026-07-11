@@ -5,7 +5,10 @@ import { FONT } from '../constants/theme';
 import * as Haptics from 'expo-haptics';
 
 const ITEM_HEIGHT = 64;
-const REPEAT_COUNT = 150; // Big array for infinite scrolling
+const VISIBLE_ROWS = 5;
+const CENTER_ROW = Math.floor(VISIBLE_ROWS / 2);
+const EDGE_PADDING = ITEM_HEIGHT * CENTER_ROW;
+const REPEAT_COUNT = 150;
 
 interface AnimatedTimePickerProps {
   values: string[];
@@ -20,10 +23,9 @@ export default function AnimatedTimePicker({ values, selectedValue, onSelect, ac
   const scrollY = useRef(new Animated.Value(0)).current;
   const flatListRef = useRef<any>(null);
   const [isLayoutReady, setIsLayoutReady] = useState(false);
-  
+
   const repeatedValues = useMemo(() => Array(REPEAT_COUNT).fill(values).flat(), [values]);
-  const paddedValues = useMemo(() => ['', ...repeatedValues, ''], [repeatedValues]);
-  
+
   const baseIndex = values.indexOf(selectedValue) >= 0 ? values.indexOf(selectedValue) : 0;
   const initialIndex = Math.floor(REPEAT_COUNT / 2) * values.length + baseIndex;
 
@@ -41,7 +43,6 @@ export default function AnimatedTimePicker({ values, selectedValue, onSelect, ac
 
   const hasJumped = useRef(false);
 
-  // When layout is ready, jump to the middle without animation
   useEffect(() => {
     if (isLayoutReady && flatListRef.current && initialIndex >= 0 && !hasJumped.current) {
       hasJumped.current = true;
@@ -49,7 +50,7 @@ export default function AnimatedTimePicker({ values, selectedValue, onSelect, ac
         flatListRef.current?.scrollToOffset({ offset: initialIndex * ITEM_HEIGHT, animated: false });
       }, 50);
     }
-  }, [isLayoutReady]);
+  }, [isLayoutReady, initialIndex]);
 
   const handleMomentumScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const y = e.nativeEvent.contentOffset.y;
@@ -59,19 +60,13 @@ export default function AnimatedTimePicker({ values, selectedValue, onSelect, ac
     }
   };
 
-  const handleItemPress = (idx: number) => {
-    if (idx === 0 || idx === paddedValues.length - 1) return;
-    const scrollIndex = idx - 1;
-    flatListRef.current?.scrollToOffset({ offset: scrollIndex * ITEM_HEIGHT, animated: true });
-    onSelect(repeatedValues[scrollIndex]);
+  const handleItemPress = (index: number) => {
+    flatListRef.current?.scrollToOffset({ offset: index * ITEM_HEIGHT, animated: true });
+    onSelect(repeatedValues[index]);
   };
 
-  const renderItem = ({ item, index }: { item: string, index: number }) => {
-    if (item === '') {
-      return <View style={{ height: ITEM_HEIGHT }} />;
-    }
-
-    const position = (index - 1) * ITEM_HEIGHT;
+  const renderItem = ({ item, index }: { item: string; index: number }) => {
+    const position = index * ITEM_HEIGHT;
 
     const inputRange = [
       position - ITEM_HEIGHT * 2,
@@ -100,15 +95,15 @@ export default function AnimatedTimePicker({ values, selectedValue, onSelect, ac
     });
 
     return (
-      <TouchableOpacity 
-        activeOpacity={1} 
+      <TouchableOpacity
+        activeOpacity={1}
         onPress={() => handleItemPress(index)}
         style={styles.itemContainer}
       >
         <Animated.Text style={[styles.itemText, { opacity: whiteOpacity, transform: [{ scale }], color: dimColor }]}>
           {item}
         </Animated.Text>
-        
+
         <Animated.Text style={[styles.itemText, { position: 'absolute', opacity: colorOpacity, transform: [{ scale }], color: accentColor }]}>
           {item}
         </Animated.Text>
@@ -120,20 +115,26 @@ export default function AnimatedTimePicker({ values, selectedValue, onSelect, ac
     <View style={styles.container}>
       <Animated.FlatList
         ref={flatListRef}
-        data={paddedValues}
-        nestedScrollEnabled={true}
+        data={repeatedValues}
+        nestedScrollEnabled
         keyExtractor={(_, index) => index.toString()}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         snapToInterval={ITEM_HEIGHT}
         decelerationRate="normal"
+        directionalLockEnabled
+        contentContainerStyle={styles.listContent}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true }
+          { useNativeDriver: true },
         )}
         onMomentumScrollEnd={handleMomentumScrollEnd}
         scrollEventThrottle={16}
-        getItemLayout={(data, index) => ({ length: ITEM_HEIGHT, offset: ITEM_HEIGHT * index, index })}
+        getItemLayout={(_, index) => ({
+          length: ITEM_HEIGHT,
+          offset: EDGE_PADDING + ITEM_HEIGHT * index,
+          index,
+        })}
         windowSize={5}
         initialNumToRender={10}
         maxToRenderPerBatch={10}
@@ -147,10 +148,13 @@ export default function AnimatedTimePicker({ values, selectedValue, onSelect, ac
 
 const styles = StyleSheet.create({
   container: {
-    height: ITEM_HEIGHT * 3,
+    height: ITEM_HEIGHT * VISIBLE_ROWS,
     overflow: 'hidden',
     position: 'relative',
     width: 86,
+  },
+  listContent: {
+    paddingVertical: EDGE_PADDING,
   },
   itemContainer: {
     height: ITEM_HEIGHT,
@@ -164,7 +168,7 @@ const styles = StyleSheet.create({
   },
   centerHighlight: {
     position: 'absolute',
-    top: ITEM_HEIGHT,
+    top: ITEM_HEIGHT * CENTER_ROW,
     left: '50%',
     marginLeft: -36,
     width: 72,

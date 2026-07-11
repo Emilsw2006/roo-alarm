@@ -9,6 +9,7 @@ import { FONT_FAMILY } from '../constants/theme';
 import Icon from '../components/Icon';
 import SquishyButton from '../components/SquishyButton';
 import { configurePlaybackAudio, createRooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
+import { resetToHome } from '../lib/alarmNavigation';
 
 interface FailScreenProps {
   navigation: any;
@@ -148,7 +149,7 @@ export default function FailScreen({ navigation, route }: FailScreenProps) {
         <SquishyButton
           color="#ff3b30"
           shadowColor="rgba(255, 59, 48, 0.4)"
-          onPress={() => navigation.navigate('Home', { failedDaily: true })}
+          onPress={() => resetToHome(navigation, isDaily ? { failedDaily: true } : undefined)}
           contentStyle={{ height: 58, alignItems: 'center', justifyContent: 'center' }}
         >
           <Text style={styles.startBtnText}>{t('alarmFlow.tryTomorrow')}</Text>

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState } from 'react';
+import { DEFAULT_ENABLED_MISSIONS } from './missions';
 
 interface OnboardingData {
   wakeUpThought?: string;
@@ -13,10 +14,11 @@ interface OnboardingData {
   wakeUpDuration?: string;
   targetWakeTime?: Date;
   protectedDays?: number[];
-  soundSettings?: any;
   userName?: string;
   gender?: string;
 }
+
+export type { OnboardingData };
 
 interface OnboardingContextProps {
   data: OnboardingData;
@@ -31,13 +33,20 @@ const OnboardingContext = createContext<OnboardingContextProps>({
 });
 
 export const OnboardingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [data, setData] = useState<OnboardingData>({});
+  const [data, setData] = useState<OnboardingData>({
+    missionType: 'roulette',
+    selectedMissions: DEFAULT_ENABLED_MISSIONS,
+  });
 
   const updateData = (newData: Partial<OnboardingData>) => {
     setData((prev) => ({ ...prev, ...newData }));
   };
 
-  const resetData = () => setData({});
+  const resetData = () =>
+    setData({
+      missionType: 'roulette',
+      selectedMissions: DEFAULT_ENABLED_MISSIONS,
+    });
 
   return (
     <OnboardingContext.Provider value={{ data, updateData, resetData }}>

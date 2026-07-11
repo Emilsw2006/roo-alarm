@@ -1,18 +1,18 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useAuth } from '../constants/AuthContext';
-import { useSubscription } from '../constants/SubscriptionContext';
 import { useColors } from '../constants/ThemeContext';
 import AppLoadingScreen from '../components/AppLoadingScreen';
+import { useAuthNavigationState } from '../hooks/useAuthNavigationState';
+import { usePendingAlarmRoute } from '../hooks/usePendingAlarmRoute';
 
-import WelcomeScreen from '../screens/WelcomeScreen';
 import LoginScreen from '../screens/LoginScreen';
 import SignUpScreen from '../screens/SignUpScreen';
 import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
 import OnboardingScreen from '../screens/onboarding/OnboardingScreen';
-import { PAYWALL_START_STEP } from '../screens/onboarding/OnboardingSteps';
 import HomeScreen from '../screens/HomeScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import SubscriptionScreen from '../screens/SubscriptionScreen';
+import PaywallFlowScreen from '../screens/PaywallFlowScreen';
 import AlarmUnlockScreen from '../screens/AlarmUnlockScreen';
 import AlarmMissionScreen from '../screens/AlarmMissionScreen';
 import CameraScreen from '../screens/CameraScreen';
@@ -20,37 +20,49 @@ import SuccessScreen from '../screens/SuccessScreen';
 import FailScreen from '../screens/FailScreen';
 
 export type AuthStackParamList = {
-  Onboarding: { initialStep?: number } | undefined;
   Welcome: undefined;
-  Login: undefined;
-  SignUp: undefined;
+  Onboarding: { initialStep?: number } | undefined;
+  Login: { fromOnboarding?: boolean; existingAccount?: boolean; resumePaywall?: boolean } | undefined;
+  SignUp: { fromOnboarding?: boolean } | undefined;
   ForgotPassword: undefined;
 };
 
 export type MainStackParamList = {
-  Home: undefined;
+  Home: { completedDaily?: boolean; failedDaily?: boolean } | undefined;
   Settings: undefined;
-  AlarmUnlock: { isDaily?: boolean };
-  AlarmMission: { isDaily?: boolean };
-  Camera: { isDaily?: boolean };
-  Success: { isDaily?: boolean };
+  Subscription: undefined;
+  Paywall: undefined;
+  AlarmUnlock: { isDaily?: boolean; alarm?: import('../constants/data').Alarm };
+  AlarmMission: { isDaily?: boolean; alarm?: import('../constants/data').Alarm; fromAlarmKit?: boolean };
+  Camera: { isDaily?: boolean; alarm?: import('../constants/data').Alarm; missionExpiresAt?: number };
+  Success: { isDaily?: boolean; alarm?: import('../constants/data').Alarm };
   Fail: { isDaily?: boolean };
 };
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const MainStack = createNativeStackNavigator<MainStackParamList>();
 
-function AuthNavigator({ initialStep = 1 }: { initialStep?: number }) {
+function AuthNavigator({
+  initialRoute = 'Onboarding',
+  initialStep = 1,
+}: {
+  initialRoute?: keyof Pick<AuthStackParamList, 'Onboarding'>;
+  initialStep?: number;
+}) {
   return (
     <AuthStack.Navigator
+      initialRouteName={initialRoute}
       screenOptions={{
         headerShown: false,
         animation: 'slide_from_right',
         contentStyle: { backgroundColor: 'transparent' },
       }}
     >
-      <AuthStack.Screen name="Onboarding" component={OnboardingScreen} initialParams={{ initialStep }} />
-      <AuthStack.Screen name="Welcome" component={WelcomeScreen} />
+      <AuthStack.Screen
+        name="Onboarding"
+        component={OnboardingScreen}
+        initialParams={{ initialStep }}
+      />
       <AuthStack.Screen name="Login" component={LoginScreen} />
       <AuthStack.Screen name="SignUp" component={SignUpScreen} />
       <AuthStack.Screen
@@ -82,46 +94,94 @@ function MainNavigator() {
         }}
       />
       <MainStack.Screen
+        name="Subscription"
+        component={SubscriptionScreen}
+        options={{
+          animation: 'slide_from_right',
+          gestureEnabled: true,
+        }}
+      />
+      <MainStack.Screen
+        name="Paywall"
+        component={PaywallFlowScreen}
+        options={{
+          presentation: 'fullScreenModal',
+          animation: 'slide_from_bottom',
+          gestureEnabled: false,
+        }}
+      />
+      <MainStack.Screen
         name="AlarmUnlock"
         component={AlarmUnlockScreen}
-        options={{ animation: 'fade' }}
+        options={{
+          presentation: 'fullScreenModal',
+          animation: 'fade',
+          gestureEnabled: false,
+          contentStyle: { backgroundColor: '#000000' },
+        }}
       />
       <MainStack.Screen
         name="AlarmMission"
         component={AlarmMissionScreen}
-        options={{ animation: 'fade' }}
+        options={{
+          presentation: 'fullScreenModal',
+          animation: 'fade',
+          gestureEnabled: false,
+          contentStyle: { backgroundColor: '#000000' },
+        }}
       />
       <MainStack.Screen
         name="Camera"
         component={CameraScreen}
-        options={{ animation: 'fade', gestureEnabled: false }}
+        options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: '#000000' } }}
       />
       <MainStack.Screen
         name="Success"
         component={SuccessScreen}
-        options={{ animation: 'fade', gestureEnabled: false }}
+        options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: '#ffffff' } }}
       />
       <MainStack.Screen
         name="Fail"
         component={FailScreen}
-        options={{ animation: 'fade', gestureEnabled: false }}
+        options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: '#ffffff' } }}
       />
     </MainStack.Navigator>
   );
 }
 
 export default function AppNavigator() {
-  const { session, loading } = useAuth();
-  const { loading: subscriptionLoading, hasPremiumAccess } = useSubscription();
-  const { colors, initialDataLoading } = useColors();
+  const { colors } = useColors();
+  const {
+    loading,
+    session,
+    showMain,
+    authInitialRoute,
+    authInitialStep,
+  } = useAuthNavigationState();
+  const { pendingAlarm } = usePendingAlarmRoute();
+  const [forceReady, setForceReady] = useState(false);
 
-  if (loading || (session && (subscriptionLoading || (hasPremiumAccess && initialDataLoading)))) {
+  useEffect(() => {
+    const timeoutId = setTimeout(() => setForceReady(true), 2500);
+    return () => clearTimeout(timeoutId);
+  }, []);
+
+  const showMainForAlarm = !!session?.user && pendingAlarm;
+  const shouldShowMain = showMain || showMainForAlarm;
+
+  if (loading && (!forceReady || !!session?.user?.id)) {
     return <AppLoadingScreen backgroundColor={colors.bg} indicatorColor={colors.accSolid} />;
   }
 
-  if (session && hasPremiumAccess) {
+  if (shouldShowMain) {
     return <MainNavigator />;
   }
 
-  return <AuthNavigator initialStep={session ? PAYWALL_START_STEP : 1} />;
+  return (
+    <AuthNavigator
+      key={`${session?.user?.id ?? 'guest'}-${authInitialRoute}-${authInitialStep}`}
+      initialRoute={authInitialRoute}
+      initialStep={authInitialStep}
+    />
+  );
 }

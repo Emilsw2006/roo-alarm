@@ -188,8 +188,38 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const acceptPunishment = async () => {
     if (pendingPunishmentStreak === null) return;
+    const checkpoint = getCheckpoint(pendingPunishmentStreak);
     setShowRescueModal(false);
-    setStreakState(getCheckpoint(pendingPunishmentStreak));
+    setStreakState(checkpoint);
+
+    // Persistir el castigo en el día actual evita que al reiniciar
+    // loadStreak vuelva a detectar la misma caída como "pendiente".
+    if (user) {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const { data } = await supabase
+        .from('streak_history')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('date', todayStr)
+        .limit(1);
+
+      if (data && data.length > 0) {
+        await supabase
+          .from('streak_history')
+          .update({ streak_count: checkpoint })
+          .eq('id', data[0].id);
+      } else {
+        await supabase
+          .from('streak_history')
+          .insert({
+            user_id: user.id,
+            date: todayStr,
+            streak_count: checkpoint,
+          });
+      }
+      await loadWeeklyHistory();
+    }
+
     setPendingPunishmentStreak(null);
   };
 

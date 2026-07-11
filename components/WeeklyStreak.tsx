@@ -14,23 +14,36 @@ interface WeeklyStreakProps {
   compact?: boolean;
   circles?: boolean;
   rings?: boolean;
+  ringSize?: number;
+  ringRadius?: number;
+  flameSize?: number;
+  labelSize?: number;
 }
 
-const RING_SIZE = 44;
-const RING_RADIUS = 17;
-
-const getOpenRingPath = () => {
-  const center = RING_SIZE / 2;
+const getOpenRingPath = (ringSize: number, ringRadius: number) => {
+  const center = ringSize / 2;
   const start = (145 * Math.PI) / 180;
   const end = (395 * Math.PI) / 180;
-  const startX = center + RING_RADIUS * Math.cos(start);
-  const startY = center + RING_RADIUS * Math.sin(start);
-  const endX = center + RING_RADIUS * Math.cos(end);
-  const endY = center + RING_RADIUS * Math.sin(end);
-  return `M ${startX} ${startY} A ${RING_RADIUS} ${RING_RADIUS} 0 1 1 ${endX} ${endY}`;
+  const startX = center + ringRadius * Math.cos(start);
+  const startY = center + ringRadius * Math.sin(start);
+  const endX = center + ringRadius * Math.cos(end);
+  const endY = center + ringRadius * Math.sin(end);
+  return `M ${startX} ${startY} A ${ringRadius} ${ringRadius} 0 1 1 ${endX} ${endY}`;
 };
 
-export default function WeeklyStreak({ streak, animateDayIndex, visualHistory, onPress, compact = false, circles = false, rings = false }: WeeklyStreakProps) {
+export default function WeeklyStreak({
+  streak,
+  animateDayIndex,
+  visualHistory,
+  onPress,
+  compact = false,
+  circles = false,
+  rings = false,
+  ringSize = 44,
+  ringRadius = 17,
+  flameSize = 15,
+  labelSize = 10,
+}: WeeklyStreakProps) {
   const { colors, weeklyHistory, currentDayIndex } = useColors();
   const { t, language } = useLanguage();
   const scaleAnims = useRef(Array.from({ length: 7 }).map(() => new Animated.Value(1))).current;
@@ -80,12 +93,12 @@ export default function WeeklyStreak({ streak, animateDayIndex, visualHistory, o
           const ringContentOpacity = ringActive ? 1 : 0.58;
           
           return (
-            <Animated.View key={i} style={[styles.dayContainer, compact && styles.compactDay, { transform: [{ scale: scaleAnims[i] }] }]}>
+            <Animated.View key={i} style={[styles.dayContainer, compact && styles.compactDay, rings && styles.ringDay, { transform: [{ scale: scaleAnims[i] }] }]}>
               {rings ? (
-                <View style={styles.ringItem}>
-                  <Svg width={RING_SIZE} height={RING_SIZE} style={styles.ringSvg}>
+                <View style={[styles.ringItem, { width: ringSize - 2, height: ringSize + 4 }]}>
+                  <Svg width={ringSize} height={ringSize} style={styles.ringSvg}>
                     <Path
-                      d={getOpenRingPath()}
+                      d={getOpenRingPath(ringSize, ringRadius)}
                       fill="none"
                       stroke={ringColor}
                       strokeWidth={ringStroke}
@@ -93,15 +106,15 @@ export default function WeeklyStreak({ streak, animateDayIndex, visualHistory, o
                       strokeLinecap="round"
                     />
                   </Svg>
-                  <View style={[styles.ringFlame, { opacity: ringContentOpacity }]}>
+                  <View style={[styles.ringFlame, { opacity: ringContentOpacity, top: ringSize * 0.2, width: ringSize - 2 }]}>
                     <Icon 
                       name="flame" 
-                      size={15} 
+                      size={flameSize} 
                       color={ringActive ? accentColor : colors.textDim} 
                       variant={ringActive ? 'solid' : 'outline'}
                     />
                   </View>
-                  <Text style={[styles.ringLabel, { color: labelColor, opacity: ringActive ? 1 : 0.72 }]}>{days[i][0]}</Text>
+                  <Text style={[styles.ringLabel, { color: labelColor, opacity: ringActive ? 1 : 0.72, top: ringSize * 0.61, width: ringSize - 2, fontSize: labelSize }]}>{days[i][0]}</Text>
                 </View>
               ) : circles ? (
                 <>
@@ -183,11 +196,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  ringDay: {
+    flex: 1,
+    minWidth: 0,
+  },
   ringItem: {
-    width: 42,
-    height: 48,
     alignItems: 'center',
     justifyContent: 'flex-start',
+    alignSelf: 'center',
   },
   ringSvg: {
     position: 'absolute',
@@ -195,16 +211,11 @@ const styles = StyleSheet.create({
   },
   ringLabel: {
     position: 'absolute',
-    top: 27,
-    width: 42,
     textAlign: 'center',
-    fontSize: 10,
     fontWeight: '900',
   },
   ringFlame: {
     position: 'absolute',
-    top: 9,
-    width: 42,
     alignItems: 'center',
   },
   compactDay: {

@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Pressable, Animated, Text, StyleSheet, ViewStyle, TextStyle, View } from 'react-native';
+import { Pressable, Animated, Text, StyleSheet, ViewStyle, TextStyle, StyleProp } from 'react-native';
 import { useColors } from '../constants/ThemeContext';
 import { SIZES, FONT_FAMILY } from '../constants/theme';
 import * as Haptics from 'expo-haptics';
@@ -9,8 +9,8 @@ interface SquishyButtonProps {
   onPress: () => void;
   color?: string;
   textColor?: string;
-  style?: ViewStyle;
-  contentStyle?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
+  contentStyle?: StyleProp<ViewStyle>;
   textStyle?: TextStyle;
   shadowColor?: string;
   shadowDepth?: number;
@@ -98,7 +98,7 @@ export default function SquishyButton({
 
 const styles = StyleSheet.create({
   container: {
-    width: '100%',
+    alignSelf: 'stretch',
   },
   buttonOuter: {
     width: '100%',

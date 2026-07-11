@@ -11,24 +11,6 @@ export type MissionMode = 'personalized' | 'roulette';
 
 export const DEFAULT_PERSONALIZED_MISSION = 'make_bed';
 
-export const DEFAULT_ENABLED_MISSIONS = [
-  'make_bed',
-  'sky_photo',
-  'touch_grass',
-  'random_object',
-  'water',
-  'toothbrush',
-  'shoes',
-  'keys',
-  'book',
-  'plant',
-  'doorway',
-  'mug',
-  'towel',
-  'pet',
-  'sun_photo',
-];
-
 export const MISSION_LIST: Mission[] = [
   {
     id: 'make_bed',
@@ -37,30 +19,6 @@ export const MISSION_LIST: Mission[] = [
     icon: 'bed',
     verb: 'Sheets straight, pillows set',
     hint: 'Frame your made bed in view',
-  },
-  {
-    id: 'sky_photo',
-    label: 'Photo of the sky',
-    emoji: '🌤️',
-    icon: 'sunrise',
-    verb: 'Step into daylight',
-    hint: 'Capture the sky from a window, balcony, or outside',
-  },
-  {
-    id: 'touch_grass',
-    label: 'Touch grass',
-    emoji: '🌱',
-    icon: 'globe',
-    verb: 'Get near real nature',
-    hint: 'Show grass, leaves, or a plant outside',
-  },
-  {
-    id: 'random_object',
-    label: 'Find an object',
-    emoji: '🎒',
-    icon: 'search',
-    verb: 'Grab something away from bed',
-    hint: 'Show any clear household object',
   },
   {
     id: 'water',
@@ -79,36 +37,20 @@ export const MISSION_LIST: Mission[] = [
     hint: 'Show your toothbrush clearly',
   },
   {
-    id: 'shoes',
-    label: 'Find your shoes',
-    emoji: '👟',
-    icon: 'arrowUp',
-    verb: 'Get ready to move',
-    hint: 'Show a pair of shoes',
+    id: 'sun_photo',
+    label: 'Photo of sunlight',
+    emoji: '☀️',
+    icon: 'sunrise',
+    verb: 'Find morning light',
+    hint: 'Show sunlight on a wall, window, or floor',
   },
   {
-    id: 'keys',
-    label: 'Find your keys',
-    emoji: '🔑',
-    icon: 'lock',
-    verb: 'Leave-bed proof',
-    hint: 'Show your keys in frame',
-  },
-  {
-    id: 'book',
-    label: 'Find a book',
-    emoji: '📘',
-    icon: 'fileText',
-    verb: 'Wake your brain gently',
-    hint: 'Show a book or notebook',
-  },
-  {
-    id: 'plant',
-    label: 'Find a plant',
-    emoji: '🪴',
-    icon: 'globe',
-    verb: 'Start with something alive',
-    hint: 'Show a house plant or outdoor greenery',
+    id: 'sky_photo',
+    label: 'Photo of the sky',
+    emoji: '🌤️',
+    icon: 'sunrise',
+    verb: 'Step into daylight',
+    hint: 'Capture the sky from a window, balcony, or outside',
   },
   {
     id: 'doorway',
@@ -135,6 +77,54 @@ export const MISSION_LIST: Mission[] = [
     hint: 'Show a towel clearly',
   },
   {
+    id: 'shoes',
+    label: 'Find your shoes',
+    emoji: '👟',
+    icon: 'arrowUp',
+    verb: 'Get ready to move',
+    hint: 'Show a pair of shoes',
+  },
+  {
+    id: 'random_object',
+    label: 'Find an object',
+    emoji: '🎒',
+    icon: 'search',
+    verb: 'Grab something away from bed',
+    hint: 'Show any clear household object',
+  },
+  {
+    id: 'keys',
+    label: 'Find your keys',
+    emoji: '🔑',
+    icon: 'lock',
+    verb: 'Leave-bed proof',
+    hint: 'Show your keys in frame',
+  },
+  {
+    id: 'book',
+    label: 'Find a book',
+    emoji: '📘',
+    icon: 'fileText',
+    verb: 'Wake your brain gently',
+    hint: 'Show a book or notebook',
+  },
+  {
+    id: 'touch_grass',
+    label: 'Touch grass',
+    emoji: '🌱',
+    icon: 'globe',
+    verb: 'Get near real nature',
+    hint: 'Show grass, leaves, or a plant outside',
+  },
+  {
+    id: 'plant',
+    label: 'Find a plant',
+    emoji: '🪴',
+    icon: 'globe',
+    verb: 'Start with something alive',
+    hint: 'Show a house plant or outdoor greenery',
+  },
+  {
     id: 'pet',
     label: 'Find your pet',
     emoji: '🐾',
@@ -142,15 +132,10 @@ export const MISSION_LIST: Mission[] = [
     verb: 'Say good morning',
     hint: 'Show your pet if they are nearby',
   },
-  {
-    id: 'sun_photo',
-    label: 'Photo of sunlight',
-    emoji: '☀️',
-    icon: 'sunrise',
-    verb: 'Find morning light',
-    hint: 'Show sunlight on a wall, window, or floor',
-  },
 ];
+
+/** Todas las misiones activas por defecto en ruleta y onboarding. */
+export const DEFAULT_ENABLED_MISSIONS = MISSION_LIST.map((mission) => mission.id);
 
 export const MISSIONS: Record<string, Mission> = MISSION_LIST.reduce((acc, mission) => {
   acc[mission.id] = mission;
@@ -170,4 +155,28 @@ export function normalizeMissionId(id?: string | null) {
 
 export function getMission(id?: string | null) {
   return MISSIONS[normalizeMissionId(id)] || MISSIONS[DEFAULT_PERSONALIZED_MISSION];
+}
+
+/**
+ * Devuelve la lista de misiones para la ruleta. Una ruleta necesita variedad: si
+ * hay menos de 2 misiones válidas (datos corruptos o vacíos), usa el set por
+ * defecto para que no se quede "girando" siempre la misma (p. ej. solo la cama).
+ */
+export function resolveRoulettePool(enabledMissions?: string[] | null): Mission[] {
+  const source =
+    Array.isArray(enabledMissions) && enabledMissions.length > 0
+      ? enabledMissions
+      : DEFAULT_ENABLED_MISSIONS;
+
+  const unique = source
+    .map((id) => getMission(id))
+    .filter((item, index, list) => list.findIndex((other) => other.id === item.id) === index);
+
+  if (unique.length < 2) {
+    return DEFAULT_ENABLED_MISSIONS.map((id) => getMission(id)).filter(
+      (item, index, list) => list.findIndex((other) => other.id === item.id) === index
+    );
+  }
+
+  return unique;
 }

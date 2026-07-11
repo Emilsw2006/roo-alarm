@@ -1,0 +1,88 @@
+{
+  "identifier" : "RooAlarmPremium",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "storeKitErrors" : [
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Load Products"
+      }
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "rooalarm_premium",
+      "localizations" : [
+
+      ],
+      "name" : "RooAlarm Premium",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "39.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6738292001",
+          "introductoryOffer" : {
+            "internalID" : "6738292002",
+            "numberOfPeriods" : 1,
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
+          "localizations" : [
+            {
+              "description" : "Acceso premium anual a RooAlarm",
+              "displayName" : "RooAlarm Annual",
+              "locale" : "es_ES"
+            }
+          ],
+          "productID" : "rooalarm_annual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "RooAlarm Annual",
+          "subscriptionGroupID" : "rooalarm_premium",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "4.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "6738292003",
+          "localizations" : [
+            {
+              "description" : "Acceso premium semanal a RooAlarm",
+              "displayName" : "RooAlarm Weekly",
+              "locale" : "es_ES"
+            }
+          ],
+          "productID" : "rooalarm_weekly",
+          "recurringSubscriptionPeriod" : "P1W",
+          "referenceName" : "RooAlarm Weekly",
+          "subscriptionGroupID" : "rooalarm_premium",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

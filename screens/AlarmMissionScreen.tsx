@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Dimensions, Image } from 'react-native';
+import { View, Text, StyleSheet, Animated, Dimensions, Image, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
@@ -8,17 +8,22 @@ import * as Haptics from 'expo-haptics';
 import { FONT_FAMILY } from '../constants/theme';
 import { useLanguage } from '../constants/LanguageContext';
 import {
-  DEFAULT_ENABLED_MISSIONS,
   DEFAULT_PERSONALIZED_MISSION,
   getMission,
   MISSION_LIST,
   Mission,
   MissionMode,
+  resolveRoulettePool,
 } from '../constants/missions';
 import SquishyButton from '../components/SquishyButton';
+import MissionRescuePrompt from '../components/MissionRescuePrompt';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../constants/AuthContext';
+import { useColors } from '../constants/ThemeContext';
 import { configurePlaybackAudio, createRooAudioPlayer, RooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
+import { finishMissionTimeout, onMissionTimerExpired } from '../lib/missionTimeout';
+import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
+import { cancelDismissRetrigger } from '../lib/alarmScheduler';
 
 const TOTAL = 60;
 const { width } = Dimensions.get('window');
@@ -35,8 +40,10 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
   const isDaily = route.params?.isDaily ?? false;
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { rescueTokens, setRescueTokens } = useColors();
   const { t, missionCopy } = useLanguage();
   const alarm = route.params?.alarm;
+  const fromAlarmKit = route.params?.fromAlarmKit ?? false;
   const [permission, requestPermission] = useCameraPermissions();
   const [seconds, setSeconds] = useState(TOTAL);
   const [mission, setMission] = useState<Mission>(getMission(alarm?.mission));
@@ -51,11 +58,19 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
   const itemScale = useRef(new Animated.Value(1)).current;
   const expiresAtRef = useRef(Date.now() + TOTAL * 1000);
   const tickSoundRef = useRef<RooAudioPlayer | null>(null);
+  const timeoutHandledRef = useRef(false);
+  const [showRescuePrompt, setShowRescuePrompt] = useState(false);
 
   const value = seconds / TOTAL;
   const size = Math.min(width - 92, 270);
   const r = size / 2 - 16;
   const c = 2 * Math.PI * r;
+
+  useEffect(() => {
+    if (fromAlarmKit && alarm?.id && Platform.OS === 'ios') {
+      void cancelDismissRetrigger(alarm.id);
+    }
+  }, [fromAlarmKit, alarm?.id]);
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 360, useNativeDriver: true }).start();
@@ -73,13 +88,57 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
   }, []);
 
   useEffect(() => {
-    if (seconds === 0) {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      navigation.replace('AlarmUnlock', { isDaily, alarm });
+    if (seconds !== 0 || timeoutHandledRef.current) return;
+    if (intervalRef.current) clearInterval(intervalRef.current);
+
+    void (async () => {
+      const outcome = await onMissionTimerExpired({ isDaily, alarm }, user?.id, rescueTokens);
+      if (outcome === 'rescue') {
+        setShowRescuePrompt(true);
+        return;
+      }
+      timeoutHandledRef.current = true;
+      await finishMissionTimeout(navigation, { isDaily, alarm }, user?.id, { skipRetrigger: true });
+    })();
+  }, [seconds, navigation, isDaily, alarm, user?.id, rescueTokens]);
+
+  const handleUseToken = async () => {
+    if (rescueTokens <= 0) return;
+    timeoutHandledRef.current = true;
+    setRescueTokens(rescueTokens - 1);
+    if (user) {
+      await supabase.from('user_settings').update({ rescue_tokens: rescueTokens - 1 }).eq('user_id', user.id);
     }
-  }, [seconds, navigation, isDaily, alarm]);
+    setShowRescuePrompt(false);
+    void finalizeAlarmSuccess(alarm, user?.id);
+    navigation.replace('Success', { isDaily, alarm });
+  };
+
+  const handleRepeatAlarm = () => {
+    setShowRescuePrompt(false);
+    timeoutHandledRef.current = true;
+    void finishMissionTimeout(navigation, { isDaily, alarm }, user?.id, { skipRetrigger: true });
+  };
+
+  const startRoulettePool = (enabled?: string[] | null) => {
+    const pool = resolveRoulettePool(enabled);
+    setMissionMode('roulette');
+    setRoulettePool(pool);
+    setMission(pool[0]);
+  };
 
   const resolveMission = async () => {
+    if (!isDaily && alarm?.missionMode === 'roulette') {
+      startRoulettePool(alarm.enabledMissions);
+      return;
+    }
+
+    if (!isDaily) {
+      setMissionMode('personalized');
+      setMission(getMission(alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
+      return;
+    }
+
     if (!user) {
       setMission(getMission(alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
       return;
@@ -92,16 +151,7 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
       .single();
 
     if (data?.mission_mode === 'roulette') {
-      const allowed = Array.isArray(data.enabled_missions) && data.enabled_missions.length > 0
-        ? data.enabled_missions
-        : DEFAULT_ENABLED_MISSIONS;
-      const choices = allowed
-        .map(id => getMission(id))
-        .filter((item, index, list) => list.findIndex(other => other.id === item.id) === index);
-      const pool = choices.length > 0 ? choices : MISSION_LIST;
-      setMissionMode('roulette');
-      setRoulettePool(pool);
-      setMission(pool[0]);
+      startRoulettePool(Array.isArray(data.enabled_missions) ? data.enabled_missions : null);
       return;
     }
 
@@ -212,7 +262,7 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
         </View>
       )}
 
-      <Animated.View style={[styles.content, { paddingTop: insets.top + 34, paddingBottom: insets.bottom + 34, opacity: fadeAnim }]}>
+      <Animated.View style={[styles.content, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 28, opacity: fadeAnim }]}>
         {phase === 'intro' ? (
           <>
             <View style={styles.introSpacer} />
@@ -296,6 +346,14 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
           </>
         )}
       </Animated.View>
+
+      <MissionRescuePrompt
+        visible={showRescuePrompt}
+        tokens={rescueTokens}
+        variant="timeout"
+        onUseToken={handleUseToken}
+        onDecline={handleRepeatAlarm}
+      />
     </View>
   );
 }

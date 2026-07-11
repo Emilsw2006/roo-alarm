@@ -10,18 +10,24 @@ export interface Palette {
   surface3: string;
   hairline: string;
   hairline2: string;
+  border: string;
   text: string;
   textDim: string;
   textFaint: string;
   accSolid: string;
+  primary: string;
   accGlow: string;
   green: string;
   brandOrange?: string;
   isDark: boolean;
 }
 
+function palette(base: Omit<Palette, 'border' | 'primary'>): Palette {
+  return { ...base, border: base.hairline2, primary: base.accSolid };
+}
+
 export const PALETTES: Record<PaletteKey, Palette> = {
-  warmGlass: {
+  warmGlass: palette({
     name: 'Warm Glass',
     bg: '#5c4c47',
     gradientTop: '#6f5d57',
@@ -38,8 +44,8 @@ export const PALETTES: Record<PaletteKey, Palette> = {
     accGlow: 'rgba(255,255,255,0.15)',
     green: '#8e9f8f',
     isDark: true,
-  },
-  lavender: {
+  }),
+  lavender: palette({
     name: 'Lavender Dawn',
     bg: '#0d0b12',
     gradientTop: '#1a1525',
@@ -56,8 +62,8 @@ export const PALETTES: Record<PaletteKey, Palette> = {
     accGlow: 'rgba(179,136,255,0.45)',
     green: '#34c759',
     isDark: true,
-  },
-  ocean: {
+  }),
+  ocean: palette({
     name: 'Ocean',
     bg: '#090b0e',
     gradientTop: '#101820',
@@ -74,8 +80,8 @@ export const PALETTES: Record<PaletteKey, Palette> = {
     accGlow: 'rgba(38,198,218,0.45)',
     green: '#34c759',
     isDark: true,
-  },
-  midnight: {
+  }),
+  midnight: palette({
     name: 'Midnight Rose',
     bg: '#0b080c',
     gradientTop: '#1a1018',
@@ -92,8 +98,8 @@ export const PALETTES: Record<PaletteKey, Palette> = {
     accGlow: 'rgba(255,64,129,0.45)',
     green: '#34c759',
     isDark: true,
-  },
-  seaGradient: {
+  }),
+  seaGradient: palette({
     name: 'Sea Gradient',
     bg: '#075057',
     gradientTop: '#09606D',
@@ -110,8 +116,8 @@ export const PALETTES: Record<PaletteKey, Palette> = {
     accGlow: 'rgba(210,236,242,0.25)',
     green: '#34c759',
     isDark: true,
-  },
-  redWhite: {
+  }),
+  redWhite: palette({
     name: 'Red White',
     bg: '#F0F0F0',
     gradientTop: '#FFFFFF',
@@ -128,8 +134,8 @@ export const PALETTES: Record<PaletteKey, Palette> = {
     accGlow: 'rgba(231,71,60,0.4)',
     green: '#34c759',
     isDark: false,
-  },
-  rooGamified: {
+  }),
+  rooGamified: palette({
     name: 'Roo Gamified',
     bg: '#FFFDF8',
     gradientTop: '#FFFFFF',
@@ -147,7 +153,7 @@ export const PALETTES: Record<PaletteKey, Palette> = {
     green: '#34c759',
     brandOrange: '#FFA000',
     isDark: false,
-  },
+  }),
 };
 
 export const PALETTE_KEYS: PaletteKey[] = ['warmGlass', 'lavender', 'ocean', 'midnight', 'seaGradient', 'redWhite', 'rooGamified'];

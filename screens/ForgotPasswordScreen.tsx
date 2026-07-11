@@ -66,7 +66,7 @@ export default function ForgotPasswordScreen({ navigation }: ForgotPasswordScree
               </Text>
               <TouchableOpacity
                 style={[styles.primaryBtn, { backgroundColor: colors.accSolid }]}
-                onPress={() => navigation.navigate('Login')}
+                onPress={() => navigation.navigate('Login', { existingAccount: true })}
                 activeOpacity={0.85}
               >
                 <Text style={styles.primaryBtnText}>{t('auth.resetBack')}</Text>

@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { ActivityIndicator, Animated, Image, StyleSheet, View } from 'react-native';
+import React from 'react';
+import { Image, StyleSheet, View } from 'react-native';
 
 interface AppLoadingScreenProps {
   backgroundColor?: string;
@@ -8,28 +8,12 @@ interface AppLoadingScreenProps {
 
 export default function AppLoadingScreen({
   backgroundColor = '#FFFFFF',
-  indicatorColor = '#E53935',
 }: AppLoadingScreenProps) {
-  const pulse = useRef(new Animated.Value(0.96)).current;
-
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.04, duration: 760, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.96, duration: 760, useNativeDriver: true }),
-      ])
-    );
-
-    animation.start();
-    return () => animation.stop();
-  }, [pulse]);
-
   return (
     <View style={[styles.screen, { backgroundColor }]}>
-      <Animated.View style={[styles.logoWrap, { transform: [{ scale: pulse }] }]}>
-        <Image source={require('../assets/icon.png')} style={styles.logo} resizeMode="contain" />
-      </Animated.View>
-      <ActivityIndicator size="large" color={indicatorColor} />
+      <View style={styles.logoClip}>
+        <Image source={require('../assets/logo.jpeg')} style={styles.logo} resizeMode="cover" />
+      </View>
     </View>
   );
 }
@@ -39,13 +23,14 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 22,
   },
-  logoWrap: {
+  logoClip: {
     width: 132,
     height: 132,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: 30,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#EFEBE4',
   },
   logo: {
     width: '100%',

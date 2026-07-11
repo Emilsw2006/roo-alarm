@@ -8,6 +8,10 @@ import { FONT_FAMILY } from '../constants/theme';
 import SquishyButton from '../components/SquishyButton';
 import * as Haptics from 'expo-haptics';
 import { configurePlaybackAudio, createRooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
+import { resetToHome } from '../lib/alarmNavigation';
+import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
+import { useAuth } from '../constants/AuthContext';
+import { Alarm } from '../constants/data';
 
 interface SuccessScreenProps {
   navigation: any;
@@ -16,12 +20,14 @@ interface SuccessScreenProps {
 
 export default function SuccessScreen({ navigation, route }: SuccessScreenProps) {
   const isDaily = route.params?.isDaily ?? false;
+  const alarm = route.params?.alarm as Alarm | undefined;
   const insets = useSafeAreaInsets();
   const { colors, streak } = useColors();
   const { t } = useLanguage();
+  const { user } = useAuth();
 
-  const oldStreakNum = streak;
-  const newStreak = streak + 1;
+  const oldStreakNum = isDaily ? streak : 0;
+  const newStreak = isDaily ? streak + 1 : streak;
 
   const flameScale = useRef(new Animated.Value(0.3)).current;
   const flameOpacity = useRef(new Animated.Value(0.4)).current;
@@ -36,6 +42,16 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
   const btnFade = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    void finalizeAlarmSuccess(alarm, user?.id);
+  }, [alarm?.id, user?.id]);
+
+  useEffect(() => {
+    if (!isDaily) {
+      Animated.timing(btnFade, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      return;
+    }
+
     Vibration.vibrate(40);
     setTimeout(() => Vibration.vibrate(40), 1000);
     setTimeout(() => Vibration.vibrate([0, 50, 100, 60]), 3000);
@@ -110,12 +126,17 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
       <StatusBar style="dark" />
 
       <View style={styles.center}>
+        {isDaily ? (
         <Animated.View style={[styles.flameContainer, { opacity: flameOpacity, transform: [{ scale: flameScale }, { scale: pulseScale }] }]}>
           <Animated.View style={[styles.dropletOuter, { backgroundColor: colors.accSolid, shadowColor: colors.accSolid, transform: [{ rotate: wobbleRotation }] }]}>
             <View style={styles.dropletInner} />
           </Animated.View>
         </Animated.View>
+        ) : (
+          <Text style={{ fontSize: 64, marginBottom: 12 }}>✅</Text>
+        )}
 
+        {isDaily ? (
         <Animated.View style={[styles.numbersContainer, { opacity: masterOpacity, transform: [{ scale: masterScale }] }]}>
           {paddedNew.split('').map((newChar, i) => {
             const oldChar = paddedOld[i];
@@ -141,13 +162,20 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
             );
           })}
         </Animated.View>
+        ) : (
+          <Text style={[styles.bigNumber, { fontSize: 28, textAlign: 'center', paddingHorizontal: 24 }]}>
+            {t('alarmFlow.missionComplete')}
+          </Text>
+        )}
       </View>
 
       <Animated.View style={[styles.bottomBtn, { paddingBottom: insets.bottom + 34, opacity: btnFade }]}>
         <SquishyButton
           color="#000000"
           shadowColor="rgba(0,0,0,0.4)"
-          onPress={() => navigation.navigate('Home', { completedDaily: true })}
+          onPress={() =>
+            resetToHome(navigation, isDaily ? { completedDaily: true, skipAlarmSync: true } : { skipAlarmSync: true })
+          }
           contentStyle={styles.startBtnContent}
         >
           <Text style={styles.startBtnText}>{t('alarmFlow.startDay')}</Text>

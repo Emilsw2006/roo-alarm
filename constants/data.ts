@@ -1,3 +1,5 @@
+import type { MissionMode } from './missions';
+
 export interface Alarm {
   id: number;
   time: string;
@@ -7,6 +9,8 @@ export interface Alarm {
   on: boolean;
   sound?: string;
   customMission?: string;
+  missionMode?: MissionMode;
+  enabledMissions?: string[];
   specificDate?: string; // e.g. "2026-10-15"
   lastTriggeredDate?: string; // "YYYY-MM-DD"
   lastCompletedDate?: string; // "YYYY-MM-DD"

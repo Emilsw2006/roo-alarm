@@ -32,6 +32,8 @@ interface EvolutionCharacterProps {
   onAnimationEnd?: () => void;
   showRing?: boolean;
   useVideo?: boolean;
+  characterSize?: number;
+  characterImageSize?: number;
 }
 
 function RooVideo({ source, shouldLoop, onEnd, onError }: { source: number; shouldLoop: boolean; onEnd?: () => void; onError: () => void }) {
@@ -57,7 +59,7 @@ function RooVideo({ source, shouldLoop, onEnd, onError }: { source: number; shou
   return <VideoView player={player} style={styles.characterImage} contentFit="contain" nativeControls={false} allowsFullscreen={false} />;
 }
 
-export default function EvolutionCharacter({ streak, animateToStreak, onPress, animationState = 'idle', onAnimationEnd, showRing = true, useVideo = true }: EvolutionCharacterProps) {
+export default function EvolutionCharacter({ streak, animateToStreak, onPress, animationState = 'idle', onAnimationEnd, showRing = true, useVideo = true, characterSize = 230, characterImageSize = 195 }: EvolutionCharacterProps) {
   const { colors } = useColors();
   const { t } = useLanguage();
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -137,8 +139,9 @@ export default function EvolutionCharacter({ streak, animateToStreak, onPress, a
     }
   }
 
-  const size = 230;
-  const strokeWidth = 18;
+  const size = characterSize;
+  const imageSize = characterImageSize;
+  const strokeWidth = Math.round(size * 0.078);
   const radius = (size - strokeWidth) / 2;
   
   const startAngle = -120;
@@ -194,7 +197,15 @@ export default function EvolutionCharacter({ streak, animateToStreak, onPress, a
   }, [videoError, animationState]);
 
   return (
-    <TouchableOpacity style={[styles.container, !showRing && styles.containerNoRing]} activeOpacity={0.8} onPress={onPress}>
+    <TouchableOpacity
+      style={[
+        styles.container,
+        !showRing && styles.containerNoRing,
+        { minHeight: showRing ? size + 16 : size - 16, marginTop: showRing ? 26 : -8, marginBottom: showRing ? -16 : -20 },
+      ]}
+      activeOpacity={0.8}
+      onPress={onPress}
+    >
       <View style={styles.characterWrapper}>
         
         <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
@@ -251,7 +262,7 @@ export default function EvolutionCharacter({ streak, animateToStreak, onPress, a
           
           <View style={[StyleSheet.absoluteFillObject, { borderRadius: size/2, backgroundColor: tierColor, opacity: 0 }]} />
           
-          <View style={{ transform: [{ translateY: showRing ? 10.5 : -4 }], width: 195, height: 195 }}>
+          <View style={{ transform: [{ translateY: showRing ? size * 0.046 : -size * 0.017 }], width: imageSize, height: imageSize }}>
             {previousImageSource && !useVideo && (
               <Animated.Image
                 source={previousImageSource}
@@ -303,23 +314,16 @@ export default function EvolutionCharacter({ streak, animateToStreak, onPress, a
 
 const styles = StyleSheet.create({
   container: {
-    minHeight: 246,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 26,
-    marginBottom: -16,
   },
-  containerNoRing: {
-    minHeight: 214,
-    marginTop: -8,
-    marginBottom: -20,
-  },
+  containerNoRing: {},
   characterWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   characterImage: {
-    width: 195,
-    height: 195,
+    width: '100%',
+    height: '100%',
   }
 });

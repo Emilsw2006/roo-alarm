@@ -6,6 +6,7 @@ import SquishyButton from './SquishyButton';
 
 import { useLanguage } from '../constants/LanguageContext';
 import { Alarm } from '../constants/data';
+import { HomeLayoutMetrics } from '../lib/homeLayout';
 
 interface AlarmWidgetsProps {
   dailyTitle?: string;
@@ -13,34 +14,56 @@ interface AlarmWidgetsProps {
   missionName: string;
   dailyAlarmTime?: string;
   dailyAlarmAmpm?: string;
+  dailyLocked?: boolean;
+  dailyLockedSubtitle?: string;
   onPressLeft: () => void;
   onPressRight: () => void;
   otherAlarms?: Alarm[];
+  layout: HomeLayoutMetrics;
 }
 
-export default function AlarmWidgets({ dailyTitle, timeRemaining, missionName, dailyAlarmTime, dailyAlarmAmpm, onPressLeft, onPressRight, otherAlarms = [] }: AlarmWidgetsProps) {
+export default function AlarmWidgets({ dailyTitle, timeRemaining, missionName, dailyAlarmTime, dailyAlarmAmpm, dailyLocked = false, dailyLockedSubtitle, onPressLeft, onPressRight, otherAlarms = [], layout }: AlarmWidgetsProps) {
   const { colors } = useColors();
   const { t } = useLanguage();
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { gap: layout.widgetGap }]}>
       <SquishyButton 
         onPress={onPressLeft}
         color={colors.accSolid}
         shadowColor="rgba(211, 73, 69, 0.14)"
         shadowDepth={9}
-        borderRadius={34}
-        style={{ flex: 1 }}
-        contentStyle={styles.dailyWidgetInner}
+        borderRadius={layout.widgetBorderRadius}
+        style={[styles.widgetButton, { opacity: dailyLocked ? 0.88 : 1 }]}
+        contentStyle={[
+          styles.dailyWidgetInner,
+          {
+            height: layout.widgetHeight,
+            paddingHorizontal: layout.widgetPaddingH,
+            paddingVertical: layout.widgetPaddingV,
+          },
+        ]}
       >
         <Text style={[styles.widgetTitle, { color: colors.bg, opacity: 0.78 }]} numberOfLines={1}>
-          {dailyTitle || t('dailyAlarm')}
+          {dailyLocked ? t('dailyCompletedToday').toUpperCase() : (dailyTitle || t('dailyAlarm'))}
         </Text>
-        <Text style={[styles.dailyMissionText, { color: colors.bg, opacity: 0.82 }]} numberOfLines={2}>
-          {missionName}
+        <Text style={[styles.dailyMissionText, { color: colors.bg, opacity: dailyLocked ? 0.72 : 0.82 }]} numberOfLines={2}>
+          {dailyLocked ? (dailyLockedSubtitle || t('dailyAlarmDoneToday')) : missionName}
         </Text>
         <View style={styles.timeRow}>
-          <Text style={[styles.alarmTime, { color: colors.bg }]} numberOfLines={1}>
+          <Text
+            style={[
+              styles.alarmTime,
+              {
+                color: colors.bg,
+                fontSize: dailyLocked ? layout.alarmTimeLockedFontSize : layout.alarmTimeFontSize,
+                lineHeight: (dailyLocked ? layout.alarmTimeLockedFontSize : layout.alarmTimeFontSize) + 4,
+              },
+            ]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+          >
             {dailyAlarmTime || timeRemaining}
           </Text>
           {dailyAlarmAmpm ? <Text style={[styles.alarmAmpm, { color: colors.bg }]}>{dailyAlarmAmpm}</Text> : null}
@@ -53,16 +76,23 @@ export default function AlarmWidgets({ dailyTitle, timeRemaining, missionName, d
         color={colors.brandOrange || '#FFA000'}
         shadowColor="rgba(178, 128, 24, 0.14)"
         shadowDepth={9}
-        borderRadius={34}
-        style={{ flex: 1 }}
-        contentStyle={styles.otherWidgetInner}
+        borderRadius={layout.widgetBorderRadius}
+        style={styles.widgetButton}
+        contentStyle={[
+          styles.otherWidgetInner,
+          {
+            height: layout.widgetHeight,
+            paddingHorizontal: layout.widgetPaddingH,
+            paddingVertical: layout.widgetPaddingV,
+          },
+        ]}
       >
         <View style={styles.otherTextBlock}>
           <Text style={[styles.missionText, { color: colors.bg }]} numberOfLines={1}>
             {t('otherAlarms')}
           </Text>
           {otherAlarms.length > 0 ? (
-            <Text style={{ fontSize: 11, fontWeight: '800', color: colors.bg, opacity: 0.8, letterSpacing: -0.2 }}>
+            <Text style={{ fontSize: 11, fontWeight: '800', color: colors.bg, opacity: 0.8, letterSpacing: -0.2 }} numberOfLines={1}>
               {otherAlarms[0].specificDate 
                 ? `${new Date(otherAlarms[0].specificDate).getDate()} ${new Date(otherAlarms[0].specificDate).toLocaleString('default', { month: 'short' })} - ${otherAlarms[0].time}`
                 : `${otherAlarms[0].time} ${otherAlarms[0].ampm}`}
@@ -75,7 +105,7 @@ export default function AlarmWidgets({ dailyTitle, timeRemaining, missionName, d
           )}
         </View>
         <View style={styles.otherIconWrap}>
-          <Icon name="layers" size={34} color={colors.bg} variant="solid" />
+          <Icon name="layers" size={Math.round(layout.alarmTimeFontSize)} color={colors.bg} variant="solid" />
         </View>
       </SquishyButton>
     </View>
@@ -85,27 +115,17 @@ export default function AlarmWidgets({ dailyTitle, timeRemaining, missionName, d
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    gap: 18,
     paddingBottom: 10,
   },
-  widgetInner: {
-    paddingVertical: 18,
-    paddingHorizontal: 24,
-    height: 134,
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+  widgetButton: {
+    flex: 1,
+    minWidth: 0,
   },
   dailyWidgetInner: {
-    paddingVertical: 18,
-    paddingHorizontal: 24,
-    height: 138,
     justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
   otherWidgetInner: {
-    paddingVertical: 18,
-    paddingHorizontal: 24,
-    height: 138,
     justifyContent: 'space-between',
     alignItems: 'stretch',
   },
@@ -136,8 +156,8 @@ const styles = StyleSheet.create({
     marginRight: 4,
     marginBottom: 2,
   },
-  timeRow: { flexDirection: 'row', alignItems: 'baseline', maxWidth: '100%' },
-  alarmTime: { fontSize: 34, lineHeight: 38, fontWeight: '900', letterSpacing: 0 },
+  timeRow: { flexDirection: 'row', alignItems: 'baseline', maxWidth: '100%', flexShrink: 1 },
+  alarmTime: { fontWeight: '900', letterSpacing: 0, flexShrink: 1 },
   alarmAmpm: { fontSize: 13, fontWeight: '900', marginLeft: 3, opacity: 0.82 },
   widgetTitle: {
     fontSize: 11,
