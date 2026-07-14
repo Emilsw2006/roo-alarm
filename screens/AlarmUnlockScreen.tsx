@@ -65,21 +65,12 @@ export default function AlarmUnlockScreen({ navigation, route }: AlarmUnlockScre
       try {
         await configurePlaybackAudio(true);
 
-        const newSound = createRooAudioPlayer(SOUND_ASSETS[0].file, { loop: true, volume: 0.1 });
+        const newSound = createRooAudioPlayer(SOUND_ASSETS[0].file, { loop: true, volume: 1.0 });
         soundRef.current = newSound;
+        newSound.volume = 1.0;
         newSound.play();
 
         Vibration.vibrate([1000, 1000, 1000], true);
-
-        let currentVol = 0.1;
-        volumeInterval = setInterval(() => {
-          currentVol += 0.05;
-          if (currentVol >= 1.0) {
-            currentVol = 1.0;
-            clearInterval(volumeInterval);
-          }
-          newSound.volume = currentVol;
-        }, 1000);
       } catch (error) {
         console.log('Error loading sound', error);
       }

@@ -24,17 +24,20 @@ private func scheduleConfigurations(
   id uuid: UUID,
   alarmId: String,
   configurations: [AlarmManager.AlarmConfiguration<RooAlarmMetadata>]
-) async -> Bool {
+) async -> (Bool, String?) {
+  var lastError: String? = nil
   for config in configurations {
     do {
       _ = try await manager.schedule(id: uuid, configuration: config)
       NSLog("[RooAlarm] scheduled %@ successfully", alarmId)
-      return true
+      return (true, nil)
     } catch let scheduleError {
-      NSLog("[RooAlarm] schedule attempt failed for %@: %@", alarmId, String(describing: scheduleError))
+      let errStr = String(describing: scheduleError)
+      lastError = errStr
+      NSLog("[RooAlarm] schedule attempt failed for %@: %@", alarmId, errStr)
     }
   }
-  return false
+  return (false, lastError)
 }
 
 @available(iOS 26.0, *)
@@ -264,7 +267,7 @@ class AlarmKitModule: NSObject {
           let schedule = Alarm.Schedule.relative(relative)
           let uuid = alarmUUID(for: alarmId)
           try? manager.cancel(id: uuid)
-          let ok = await scheduleConfigurations(
+          let (ok, _) = await scheduleConfigurations(
             manager,
             id: uuid,
             alarmId: alarmId,
@@ -312,7 +315,7 @@ class AlarmKitModule: NSObject {
           let schedule = Alarm.Schedule.fixed(fireDate)
           let uuid = alarmUUID(for: alarmId)
           try? manager.cancel(id: uuid)
-          let ok = await scheduleConfigurations(
+          let (ok, lastError) = await scheduleConfigurations(
             manager,
             id: uuid,
             alarmId: alarmId,
@@ -324,16 +327,20 @@ class AlarmKitModule: NSObject {
               appAlarmId: alarmId
             )
           )
-          resolve(ok)
+          if ok {
+            resolve(["ok": true])
+          } else {
+            resolve(["ok": false, "error": lastError ?? "Unknown native error"])
+          }
         } catch let error {
           NSLog("[RooAlarm] scheduleAlarmAt failed for %@: %@", alarmId, String(describing: error))
-          resolve(false)
+          resolve(["ok": false, "error": String(describing: error)])
         }
       }
       return
     }
 #endif
-    resolve(false)
+    resolve(["ok": false, "error": "unsupported"])
   }
 
   @objc
@@ -425,7 +432,7 @@ class AlarmKitModule: NSObject {
               preAlertSeconds: 1
             ),
           ]
-          let ok = await scheduleConfigurations(manager, id: uuid, alarmId: mapKey, configurations: configs)
+          let (ok, _) = await scheduleConfigurations(manager, id: uuid, alarmId: mapKey, configurations: configs)
           resolve(ok)
         } catch {
           reject("alarmkit_sim_error", error.localizedDescription, error)

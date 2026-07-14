@@ -9,7 +9,7 @@ import SquishyButton from '../components/SquishyButton';
 import * as Haptics from 'expo-haptics';
 import { configurePlaybackAudio, createRooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
 import { resetToHome } from '../lib/alarmNavigation';
-import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
+import { finalizeAlarmSuccess, wasAlarmCompletedToday } from '../lib/finalizeAlarmSuccess';
 import { useAuth } from '../constants/AuthContext';
 import { Alarm } from '../constants/data';
 
@@ -26,8 +26,12 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
   const { t } = useLanguage();
   const { user } = useAuth();
 
-  const oldStreakNum = isDaily ? streak : 0;
-  const newStreak = isDaily ? streak + 1 : streak;
+  const isSimulation = !isDaily && alarm === undefined;
+  const alreadyCompleted = alarm?.id ? wasAlarmCompletedToday(alarm.id) : false;
+  const showStreakAnimation = isDaily && !alreadyCompleted;
+
+  const oldStreakNum = showStreakAnimation ? streak : 0;
+  const newStreak = showStreakAnimation ? streak + 1 : streak;
 
   const flameScale = useRef(new Animated.Value(0.3)).current;
   const flameOpacity = useRef(new Animated.Value(0.4)).current;
@@ -40,13 +44,15 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
   const wobbleAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const btnFade = useRef(new Animated.Value(0)).current;
+  const plusOneOpacity = useRef(new Animated.Value(0)).current;
+  const plusOneTranslateY = useRef(new Animated.Value(20)).current;
 
   useEffect(() => {
     void finalizeAlarmSuccess(alarm, user?.id);
   }, [alarm?.id, user?.id]);
 
   useEffect(() => {
-    if (!isDaily) {
+    if (!showStreakAnimation) {
       Animated.timing(btnFade, { toValue: 1, duration: 400, useNativeDriver: true }).start();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       return;
@@ -94,9 +100,12 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
         Animated.timing(oldNumTranslateY, { toValue: -80, duration: 900, useNativeDriver: true }),
         Animated.timing(newNumOpacity, { toValue: 1, duration: 900, useNativeDriver: true }),
         Animated.timing(newNumTranslateY, { toValue: 0, duration: 900, useNativeDriver: true }),
+        Animated.timing(plusOneOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(plusOneTranslateY, { toValue: -40, duration: 1000, useNativeDriver: true }),
       ]),
     ]).start(() => {
       Animated.timing(btnFade, { toValue: 1, duration: 700, useNativeDriver: true }).start();
+      Animated.timing(plusOneOpacity, { toValue: 0, duration: 400, delay: 600, useNativeDriver: true }).start();
     });
 
     setTimeout(() => {
@@ -126,7 +135,7 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
       <StatusBar style="dark" />
 
       <View style={styles.center}>
-        {isDaily ? (
+        {showStreakAnimation ? (
         <Animated.View style={[styles.flameContainer, { opacity: flameOpacity, transform: [{ scale: flameScale }, { scale: pulseScale }] }]}>
           <Animated.View style={[styles.dropletOuter, { backgroundColor: colors.accSolid, shadowColor: colors.accSolid, transform: [{ rotate: wobbleRotation }] }]}>
             <View style={styles.dropletInner} />
@@ -136,7 +145,7 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
           <Text style={{ fontSize: 64, marginBottom: 12 }}>✅</Text>
         )}
 
-        {isDaily ? (
+        {showStreakAnimation ? (
         <Animated.View style={[styles.numbersContainer, { opacity: masterOpacity, transform: [{ scale: masterScale }] }]}>
           {paddedNew.split('').map((newChar, i) => {
             const oldChar = paddedOld[i];
@@ -161,6 +170,9 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
               </View>
             );
           })}
+          <Animated.Text style={[styles.plusOne, { opacity: plusOneOpacity, transform: [{ translateY: plusOneTranslateY }] }]}>
+            +1
+          </Animated.Text>
         </Animated.View>
         ) : (
           <Text style={[styles.bigNumber, { fontSize: 28, textAlign: 'center', paddingHorizontal: 24 }]}>
@@ -174,7 +186,7 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
           color="#000000"
           shadowColor="rgba(0,0,0,0.4)"
           onPress={() =>
-            resetToHome(navigation, isDaily ? { completedDaily: true, skipAlarmSync: true } : { skipAlarmSync: true })
+            resetToHome(navigation, isDaily ? { completedDaily: true } : {})
           }
           contentStyle={styles.startBtnContent}
         >
@@ -222,4 +234,5 @@ const styles = StyleSheet.create({
   bottomBtn: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: 24 },
   startBtnContent: { height: 68, alignItems: 'center', justifyContent: 'center', paddingVertical: 0 },
   startBtnText: { color: '#ffffff', fontSize: 17, lineHeight: 24, fontFamily: FONT_FAMILY.bold },
+  plusOne: { position: 'absolute', right: -40, top: 0, fontSize: 32, fontFamily: FONT_FAMILY.black, color: '#FFB000' },
 });

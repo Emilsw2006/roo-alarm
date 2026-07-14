@@ -1,4 +1,4 @@
-import { getGeminiApiKey, getGeminiModel, getGeminiApiBase } from './geminiConfig';
+import { getGeminiApiKey, getGeminiModel, getGeminiApiBase, getNvidiaApiKey } from './geminiConfig';
 
 type VerifyMissionPhotoInput = {
   missionId: string;
@@ -19,7 +19,7 @@ export type VerifyMissionPhotoReason =
 
 export type VerifyMissionPhotoResult = {
   passed: boolean;
-  /** True when Gemini could not run — not a user photo failure. */
+  /** True when the AI API could not run — not a user photo failure. */
   unavailable?: boolean;
   reason?: VerifyMissionPhotoReason | string;
 };
@@ -116,14 +116,14 @@ function classifyApiFailure(status: number, body: string): VerifyMissionPhotoRes
 export async function verifyMissionPhoto(
   input: VerifyMissionPhotoInput
 ): Promise<VerifyMissionPhotoResult> {
-  const apiKey = getGeminiApiKey();
-  if (!apiKey) {
+  const nvidiaKey = getNvidiaApiKey();
+  const geminiKey = getGeminiApiKey();
+
+  if (!nvidiaKey && !geminiKey) {
     return { passed: false, unavailable: true, reason: 'missing_api_key' };
   }
 
-  const model = getGeminiModel();
   const mimeType = input.mimeType ?? 'image/jpeg';
-
   const objectGuidance = missionObjectGuidance(input.missionId, input.missionLabel);
   const emojiLine = input.missionEmoji ? `Mission icon/emoji (reference only, not pixel-perfect): ${input.missionEmoji}` : '';
 
@@ -134,10 +134,10 @@ export async function verifyMissionPhoto(
     'The user just woke up. Photos may be blurry, dark, tilted, cropped, or rushed. That is fine.',
     'Rules:',
     '- passed=true when there is any minimal but objective visual evidence of the requested object type (or a very close equivalent).',
-    '- The object does NOT need to match the app icon exactly. Real-world equivalents count (e.g. mochila/backpack/bolso/bag; taza/mug/cup; papel higiénico/toilet paper even if only part of the roll or a sheet is visible).',
+    '- The object does NOT need to match the app icon exactly.',
     '- Partial visibility is enough: a small piece, corner, handle, strap, texture, label, silhouette, or half-out-of-frame object counts if it reasonably indicates that object type.',
-    '- Be objective: do not pass just because the photo is real; pass because something visible plausibly matches the required object/category.',
     '- passed=false when: (1) image is black/blank/screenshot, (2) there is no recognizable evidence of the requested object/category, (3) the visible object is clearly DIFFERENT and unrelated (e.g. shoes when mission asks for toothbrush).',
+    '- Act like "Roo" (a friendly, energetic mascot) in the "reason" string! If passed=true, give a short, happy congratulation. If passed=false, explain cheerfully what you actually see and what you need them to show instead. Keep it under 2 sentences in Spanish.',
     '- If the evidence is weak but plausible, choose passed=true. If there is no plausible match, choose passed=false.',
     `Mission id: ${input.missionId}`,
     `Mission label (defines the required object): ${input.missionLabel}`,
@@ -148,54 +148,123 @@ export async function verifyMissionPhoto(
     .filter(Boolean)
     .join('\n');
 
-  const response = await fetch(
-    `${getGeminiApiBase()}/models/${model}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: prompt },
+  if (nvidiaKey) {
+    try {
+      const response = await fetch(
+        'https://integrate.api.nvidia.com/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${nvidiaKey}`,
+          },
+          body: JSON.stringify({
+            model: 'meta/llama-3.2-11b-vision-instruct',
+            messages: [
               {
-                inline_data: {
-                  mime_type: mimeType,
-                  data: input.imageBase64,
-                },
+                role: 'user',
+                content: [
+                  { type: 'text', text: prompt },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${mimeType};base64,${input.imageBase64}`,
+                    },
+                  },
+                ],
               },
             ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.35,
-          maxOutputTokens: 256,
-          responseMimeType: 'application/json',
-        },
-      }),
+            max_tokens: 256,
+            temperature: 0.35,
+            response_format: { type: 'json_object' },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        const failure = classifyApiFailure(response.status, body);
+        console.log('NVIDIA Llama Vision verify failed', response.status, failure.reason, body.slice(0, 240));
+        return failure;
+      }
+
+      const data = await response.json();
+      const text = data.choices?.[0]?.message?.content ?? '';
+      const parsed = extractJsonObject(text);
+
+      if (!parsed) {
+        console.log('NVIDIA Llama Vision verify invalid JSON', text.slice(0, 240));
+        return { passed: false, unavailable: true, reason: 'invalid_response' };
+      }
+
+      if (!parsed.passed) {
+        console.log('NVIDIA Llama Vision verify rejected', parsed.reason);
+        return { ...parsed, reason: parsed.reason || 'rejected' };
+      }
+
+      return parsed;
+    } catch (err) {
+      console.log('NVIDIA Llama Vision error, falling back to Gemini or default', err);
+      if (!geminiKey) {
+        return { passed: false, unavailable: true, reason: 'api_error' };
+      }
     }
-  );
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    const failure = classifyApiFailure(response.status, body);
-    console.log('Gemini verify failed', response.status, failure.reason, body.slice(0, 240));
-    return failure;
   }
 
-  const data = (await response.json()) as GeminiResponse;
-  const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text).join('') ?? '';
-  const parsed = extractJsonObject(text);
+  // Fallback to Gemini
+  if (geminiKey) {
+    const model = getGeminiModel();
+    const response = await fetch(
+      `${getGeminiApiBase()}/models/${model}:generateContent?key=${geminiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                {
+                  inline_data: {
+                    mime_type: mimeType,
+                    data: input.imageBase64,
+                  },
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.35,
+            maxOutputTokens: 256,
+            responseMimeType: 'application/json',
+          },
+        }),
+      }
+    );
 
-  if (!parsed) {
-    console.log('Gemini verify invalid JSON', text.slice(0, 240));
-    return { passed: false, unavailable: true, reason: 'invalid_response' };
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      const failure = classifyApiFailure(response.status, body);
+      console.log('Gemini verify failed', response.status, failure.reason, body.slice(0, 240));
+      return failure;
+    }
+
+    const data = (await response.json()) as GeminiResponse;
+    const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text).join('') ?? '';
+    const parsed = extractJsonObject(text);
+
+    if (!parsed) {
+      console.log('Gemini verify invalid JSON', text.slice(0, 240));
+      return { passed: false, unavailable: true, reason: 'invalid_response' };
+    }
+
+    if (!parsed.passed) {
+      console.log('Gemini verify rejected', parsed.reason);
+      return { ...parsed, reason: parsed.reason || 'rejected' };
+    }
+
+    return parsed;
   }
 
-  if (!parsed.passed) {
-    console.log('Gemini verify rejected', parsed.reason);
-    return { ...parsed, reason: parsed.reason || 'rejected' };
-  }
-
-  return parsed;
+  return { passed: false, unavailable: true, reason: 'missing_api_key' };
 }

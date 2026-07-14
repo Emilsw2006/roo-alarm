@@ -11,7 +11,7 @@ import { supabase } from './supabase';
 
 const STORAGE_KEY = 'rooalarm.scheduled_alarm_registry.v1';
 const PENDING_LAUNCH_KEY = 'rooalarm.pending_alarm_launch.v1';
-const RETRIGGER_DELAY_SECONDS = 30;
+const RETRIGGER_DELAY_SECONDS = 10;
 const CHANNEL_ID = 'rooalarm-main';
 const DEFAULT_SOUND_ID = 'default';
 const ALL_WEEK_DAYS = [0, 1, 2, 3, 4, 5, 6];
@@ -46,7 +46,7 @@ type AlarmKitNativeModule = {
     fireAtMs: number,
     title: string,
     soundId: string
-  ) => Promise<boolean>;
+  ) => Promise<boolean | { ok: boolean; error?: string }>;
   cancelAlarm: (alarmId: string) => Promise<boolean>;
   retriggerAlarm?: (alarmId: string, title: string) => Promise<boolean>;
   cancelDismissRetrigger?: (alarmId: string) => Promise<boolean>;
@@ -61,6 +61,22 @@ const alarmKitModule: AlarmKitNativeModule | undefined = NativeModules.AlarmKitM
 let notificationsConfigured = false;
 const alarmKitManagedIds = new Set<string>();
 
+// AlarmKit no tolera llamadas `schedule`/`cancel` concurrentes: dos operaciones
+// simultáneas sobre la misma alarma provocan un fallo transitorio
+// (Error Domain=com.apple.AlarmKit.Alarm Code=0) que deja la alarma sin programar.
+// Serializamos TODAS las operaciones nativas de AlarmKit en una única cola para que
+// nunca se solapen (la app las lanza desde varios flujos al arrancar).
+let nativeAlarmKitQueue: Promise<unknown> = Promise.resolve();
+const serializeAlarmKit = <T>(op: () => Promise<T>): Promise<T> => {
+  const run = nativeAlarmKitQueue.then(op, op);
+  // Mantener viva la cadena aunque una operación falle.
+  nativeAlarmKitQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+};
+
 export type ScheduleAlarmOptions = {
   protectedDays?: number[];
   simulationSoundId?: string;
@@ -68,6 +84,8 @@ export type ScheduleAlarmOptions = {
 
 export type ScheduleAlarmResult =
   | { ok: true; mode: 'alarmkit' | 'notification' }
+  | { ok: true; mode: 'alarmkit_mocked'; reason: 'simulator_or_unsupported' }
+  | { ok: true; mode: 'alarmkit_permission_denied' }
   | { ok: false; reason: string };
 
 export const usesAlarmKitOnPlatform = () => Platform.OS === 'ios';
@@ -350,20 +368,59 @@ const scheduleLocalNotification = async (alarm: Alarm, protectedDays: number[]):
 };
 
 const scheduleWithAlarmKit = async (alarm: Alarm, protectedDays: number[]): Promise<boolean> => {
-  if (!canUseAlarmKit() || !alarmKitModule) return false;
+  if (!canUseAlarmKit() || !alarmKitModule) {
+    console.warn('[RooAlarm] scheduleWithAlarmKit: no module or not iOS');
+    return false;
+  }
 
   const status = await getAlarmKitStatus();
-  if (!status.available || !status.authorized) return false;
+  if (!status.available) {
+    console.warn('[RooAlarm] scheduleWithAlarmKit: AlarmKit not available (iOS < 26 or Simulator)');
+    return false;
+  }
+  if (!status.authorized) {
+    console.warn('[RooAlarm] scheduleWithAlarmKit: AlarmKit not authorized, state=', status.authorization);
+    return false;
+  }
 
   const key = String(alarm.id);
   const title = alarm.label || 'Roo Alarm';
   const soundId = resolveSoundId(alarm);
-  const nextFire = getNextAlarmFireDate(alarm, protectedDays);
+  let nextFire = getNextAlarmFireDate(alarm, protectedDays);
 
-  if (!nextFire || typeof alarmKitModule.scheduleAlarmAt !== 'function') return false;
+  if (!nextFire) {
+    console.warn('[RooAlarm] scheduleWithAlarmKit: no nextFire date for alarm', key, 'days=', protectedDays);
+    return false;
+  }
+
+  // AlarmKit rejects dates that are too close to the current moment.
+  // Ensure at least 30 seconds in the future.
+  const minFire = new Date(Date.now() + 30_000);
+  if (nextFire < minFire) {
+    console.warn('[RooAlarm] scheduleWithAlarmKit: nextFire too close, bumping to +30s for alarm', key);
+    nextFire = minFire;
+  }
+
+  if (typeof alarmKitModule.scheduleAlarmAt !== 'function') {
+    console.warn('[RooAlarm] scheduleWithAlarmKit: scheduleAlarmAt not a function');
+    return false;
+  }
 
   try {
-    return await alarmKitModule.scheduleAlarmAt(key, nextFire.getTime(), title, soundId);
+    const res = await alarmKitModule.scheduleAlarmAt(key, nextFire.getTime(), title, soundId);
+    const ok = typeof res === 'boolean' ? res : !!res?.ok;
+    const errorMsg = typeof res === 'object' ? res?.error : null;
+
+    if (!ok) {
+      console.warn(
+        `[RooAlarm] scheduleWithAlarmKit: native scheduleAlarmAt FAILED for alarm ${key}. Error: ${
+          errorMsg ?? 'unknown'
+        }`
+      );
+    } else {
+      console.log('[RooAlarm] scheduleWithAlarmKit: SUCCESS alarm', key, 'at', nextFire.toISOString());
+    }
+    return ok;
   } catch (err) {
     console.warn('[RooAlarm] AlarmKit schedule error', err);
     return false;
@@ -418,32 +475,72 @@ export const scheduleAlarm = async (
   const scheduleDays = resolveScheduleDays(alarm, options?.protectedDays ?? ALL_WEEK_DAYS);
   const capability = await getAlarmCapability();
 
-  let notificationIds: string[] = [];
-  const permissionGranted = await ensureNotificationPermissions();
-  if (permissionGranted) {
-    notificationIds = await scheduleLocalNotification(alarm, scheduleDays);
-    if (notificationIds.length === 0) {
-      console.warn('[RooAlarm] No local notifications scheduled for alarm', key);
-    }
-  } else {
-    console.warn('[RooAlarm] Notification permission denied while scheduling alarm', key);
-  }
-
   let usesAlarmKit = false;
+  let notificationIds: string[] = [];
+  let alarmKitAuthResult: string = 'unsupported';
+
   if (Platform.OS === 'ios' && capability.capability === 'alarmkit') {
     const auth = await ensureAlarmKitAuthorized();
+    alarmKitAuthResult = auth;
     if (auth === 'authorized') {
       usesAlarmKit = await scheduleWithAlarmKit(alarm, scheduleDays);
     }
     if (!usesAlarmKit) {
-      console.warn('[RooAlarm] AlarmKit schedule failed for alarm', key, auth);
+      console.warn('[RooAlarm] AlarmKit schedule failed for alarm', key, 'auth=', auth);
     }
   }
 
-  if (!usesAlarmKit && notificationIds.length === 0) {
-    if (!permissionGranted) {
+  const permissionGranted = await ensureNotificationPermissions();
+  if (!usesAlarmKit && Platform.OS !== 'ios') {
+    if (permissionGranted) {
+      notificationIds = await scheduleLocalNotification(alarm, scheduleDays);
+      if (notificationIds.length === 0) {
+        console.warn('[RooAlarm] No local notifications scheduled for alarm', key);
+      }
+    } else {
+      console.warn('[RooAlarm] Notification permission denied while scheduling alarm', key);
       return { ok: false, reason: 'notifications_denied' };
     }
+  }
+
+  if (Platform.OS === 'ios' && !usesAlarmKit) {
+    console.warn('[RooAlarm] AlarmKit failed to schedule natively. Scheduling a local notification as a safety fallback.');
+    if (permissionGranted) {
+      notificationIds = await scheduleLocalNotification(alarm, scheduleDays);
+      if (notificationIds.length === 0) {
+        console.warn('[RooAlarm] No local notifications scheduled for fallback on iOS', key);
+      }
+    } else {
+      console.warn('[RooAlarm] Notification permission denied for safety fallback on iOS', key);
+    }
+
+    registry[key] = { 
+      usesAlarmKit: false,
+      ...(notificationIds.length > 0 ? { notificationIds } : {}),
+    };
+    alarmKitManagedIds.delete(key);
+    await saveRegistry(registry);
+
+    if (alarmKitAuthResult === 'denied') {
+      console.warn('[RooAlarm] AlarmKit permission denied by user for alarm', key);
+      return { ok: true, mode: 'alarmkit_permission_denied' };
+    }
+    if (alarmKitAuthResult === 'authorized') {
+      // Real device failure: AlarmKit was authorized but the native schedule was
+      // rejected. Do NOT pretend this is a simulator — the exact native error was
+      // already logged by scheduleWithAlarmKit. We fell back to a time-sensitive
+      // notification, so report the honest mode.
+      console.error(
+        '[RooAlarm] AlarmKit was AUTHORIZED but scheduleAlarmAt failed for alarm',
+        key,
+        '- check the native scheduleAlarmAt error above. Using notification fallback.'
+      );
+      return { ok: true, mode: 'notification' };
+    }
+    return { ok: true, mode: 'alarmkit_mocked', reason: 'simulator_or_unsupported' };
+  }
+
+  if (Platform.OS !== 'ios' && !usesAlarmKit && notificationIds.length === 0) {
     return { ok: false, reason: 'notification_schedule_failed' };
   }
 
@@ -527,6 +624,12 @@ export const cancelScheduledNotificationsForAlarm = async (alarmId: number | str
 
 /** Cancela re-disparos pendientes y notificaciones tras completar la misión con éxito. */
 export const settleAlarmAfterCompletion = async (alarmId: number | string): Promise<void> => {
+  if (Platform.OS === 'ios') {
+    await Notifications.dismissAllNotificationsAsync();
+  } else {
+    await Notifications.dismissAllNotificationsAsync();
+  }
+  await cancelAlarmSchedule(alarmId);
   await cancelDismissRetrigger(alarmId);
   await cancelScheduledNotificationsForAlarm(alarmId);
   await clearPendingAlarmLaunch();
@@ -605,7 +708,7 @@ export const retriggerManagedAlarm = async (
     return retriggerWithNotificationFallback(alarm, delaySeconds);
   }
 
-  if (capability.capability === 'legacy_notification') {
+  if (capability.capability === 'legacy_notification' && Platform.OS !== 'ios') {
     return retriggerWithNotificationFallback(alarm, delaySeconds);
   }
 
@@ -668,46 +771,39 @@ export const triggerSimulationNow = async (soundId?: string): Promise<Simulation
       return { mode: 'failed', reason: 'schedule_error' };
     }
 
-    const permissionGranted = await ensureNotificationPermissions();
-    if (!permissionGranted) {
-      return { mode: 'failed', reason: 'notifications_denied' };
-    }
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Roo Alarm',
-        body: 'Simulación de alarma',
-        sound: 'default',
-        data: { source: 'simulation', alarmId: -1 },
-        ...(Platform.OS === 'ios' ? { interruptionLevel: 'timeSensitive' as const } : {}),
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-        seconds: 1,
-      },
-    });
-    return { mode: 'notification' };
+    return { mode: 'failed', reason: 'alarmkit_simulation_failed' };
   }
-
   if (capability.capability === 'legacy_notification' || Platform.OS === 'android') {
+    if (Platform.OS === 'ios') {
+      return { mode: 'failed', reason: 'alarmkit_simulation_failed' };
+    }
+
     const permissionGranted = await ensureNotificationPermissions();
     if (!permissionGranted) {
       return { mode: 'failed', reason: 'notifications_denied' };
     }
 
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Roo Alarm',
-        body: 'Simulación de alarma',
-        sound: 'default',
-        data: { source: 'simulation', alarmId: -1 },
-        ...(Platform.OS === 'ios' ? { interruptionLevel: 'timeSensitive' as const } : {}),
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-        seconds: 1,
-      },
-    });
-    return { mode: 'notification' };
+    try {
+      const resolvedSound = soundId || DEFAULT_SOUND_ID;
+      const id = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: 'Roo Alarm',
+          body: 'Simulación de alarma',
+          sound: `${resolvedSound}.wav`,
+          data: {
+            alarmId: 'simulation',
+            isSimulation: true,
+          },
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+          seconds: 2,
+        },
+      });
+      return { mode: 'notification' };
+    } catch {
+      return { mode: 'failed', reason: 'schedule_error' };
+    }
   }
 
   if (!alarmKitModule && Platform.OS === 'ios') {

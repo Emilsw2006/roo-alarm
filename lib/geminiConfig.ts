@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 // Clave de Google Cloud Console (Generative Language API).
 // Endpoint estándar de Gemini API — compatible con claves de GCP, no solo AI Studio.
@@ -16,6 +16,19 @@ export function getGeminiModel() {
 
 export function isGeminiMissionVerifyEnabled() {
   return !!getGeminiApiKey();
+}
+
+export function getNvidiaApiKey() {
+  const key = process.env.EXPO_PUBLIC_NVIDIA_API_KEY?.trim();
+  return key && key.length > 0 ? key : null;
+}
+
+export function isNvidiaMissionVerifyEnabled() {
+  return !!getNvidiaApiKey();
+}
+
+export function isAiMissionVerifyEnabled() {
+  return isGeminiMissionVerifyEnabled() || isNvidiaMissionVerifyEnabled();
 }
 
 export function getGeminiApiBase() {

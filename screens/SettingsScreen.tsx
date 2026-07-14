@@ -31,6 +31,7 @@ import {
   getAlarmKitStatus,
   getAlarmRegistry,
   repairAlarmSchedules,
+  ensureAlarmKitAuthorized,
 } from '../lib/alarmScheduler';
 import * as Notifications from 'expo-notifications';
 import { getAlarmCapability } from '../lib/alarmCapability';
@@ -236,6 +237,35 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
 
   const [activePopup, setActivePopup] = useState<'name'|'language'|'streak'|null>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [alarmKitAuth, setAlarmKitAuth] = useState<'authorized'|'denied'|'notDetermined'|'unsupported'|null>(null);
+
+  const loadAlarmKitStatus = async () => {
+    const status = await getAlarmKitStatus();
+    if (!status.available) { setAlarmKitAuth('unsupported'); return; }
+    setAlarmKitAuth(status.authorized ? 'authorized' : (status.authorization as any) ?? 'notDetermined');
+  };
+
+  const handleRequestAlarmKitPermission = async () => {
+    if (alarmKitAuth === 'denied') {
+      // Already denied — open iOS Settings
+      Linking.openSettings();
+      return;
+    }
+    const result = await ensureAlarmKitAuthorized();
+    setAlarmKitAuth(result);
+    if (result === 'authorized') {
+      Alert.alert('✅ Permiso concedido', 'Roo Alarm puede programar alarmas nativas. ¡Todo listo!');
+    } else if (result === 'denied') {
+      Alert.alert(
+        '⚠️ Permiso denegado',
+        'Has rechazado el permiso. Ve a Ajustes → Roo Alarm → Alarmas para activarlo.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Abrir Ajustes', onPress: () => Linking.openSettings() },
+        ]
+      );
+    }
+  };
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -257,6 +287,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   useEffect(() => {
     if (!user) return;
     loadSettings();
+    void loadAlarmKitStatus();
   }, [user]);
 
   const loadSettings = async () => {
@@ -451,6 +482,28 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
               <Text style={styles.paywallBtnText}>{t('onboarding.subscribe')}</Text>
             </SquishyButton>
           </View>
+        )}
+
+        {/* ALARM PERMISSIONS */}
+        {Platform.OS === 'ios' && alarmKitAuth !== 'unsupported' && (
+          <>
+            <View style={styles.pad}>
+              <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>ALARMA NATIVA</Text>
+            </View>
+            <SettingsRow
+              icon="bell"
+              title="Permiso AlarmKit"
+              detail={
+                alarmKitAuth === 'authorized' ? '✅ Concedido' :
+                alarmKitAuth === 'denied' ? '❌ Denegado — toca para abrir Ajustes' :
+                alarmKitAuth === 'notDetermined' ? '⚠️ Toca para conceder' :
+                '…'
+              }
+              control={<Icon name="chevR" size={16} color={colors.textFaint} stroke={3} />}
+              onPress={handleRequestAlarmKitPermission}
+              last
+            />
+          </>
         )}
 
         {/* GENERAL & WAKE-UP */}
