@@ -6,6 +6,7 @@ import { useColors } from '../constants/ThemeContext';
 import { useLanguage } from '../constants/LanguageContext';
 import { FONT_FAMILY } from '../constants/theme';
 import SquishyButton from '../components/SquishyButton';
+import Icon from '../components/Icon';
 import * as Haptics from 'expo-haptics';
 import { configurePlaybackAudio, createRooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
 import { resetToHome } from '../lib/alarmNavigation';
@@ -114,9 +115,15 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
     }, 1850);
   }, []);
 
-  const wobbleRotation = wobbleAnim.interpolate({
-    inputRange: [-1, 1],
-    outputRange: ['-55deg', '-35deg'],
+  // Parpadeo sutil de llama: antes tuneado para la forma de gota (-55/-35deg),
+  // ahora usamos el icono de fuego real así que el rango debe ser mucho más leve.
+  const flameFlicker = wobbleAnim.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: ['-4deg', '0deg', '4deg'],
+  });
+  const flameSquash = wobbleAnim.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: [0.96, 1, 1.05],
   });
 
   const pulseScale = pulseAnim.interpolate({
@@ -137,9 +144,13 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
       <View style={styles.center}>
         {showStreakAnimation ? (
         <Animated.View style={[styles.flameContainer, { opacity: flameOpacity, transform: [{ scale: flameScale }, { scale: pulseScale }] }]}>
-          <Animated.View style={[styles.dropletOuter, { backgroundColor: colors.accSolid, shadowColor: colors.accSolid, transform: [{ rotate: wobbleRotation }] }]}>
-            <View style={styles.dropletInner} />
+          <View style={[styles.flameGlow, { backgroundColor: colors.accSolid }]} />
+          <Animated.View style={{ transform: [{ rotate: flameFlicker }, { scaleY: flameSquash }] }}>
+            <Icon name="flame" size={104} color={colors.accSolid} variant="solid" />
           </Animated.View>
+          <View style={styles.flameCoreWrap} pointerEvents="none">
+            <Icon name="flame" size={48} color="#FFD54F" variant="solid" />
+          </View>
         </Animated.View>
         ) : (
           <Text style={{ fontSize: 64, marginBottom: 12 }}>✅</Text>
@@ -201,31 +212,16 @@ const styles = StyleSheet.create({
   screen: { flex: 1, alignItems: 'center', backgroundColor: '#ffffff' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
   flameContainer: { width: 140, height: 140, alignItems: 'center', justifyContent: 'center' },
-  dropletOuter: {
-    width: 100,
-    height: 100,
-    borderBottomLeftRadius: 50,
-    borderBottomRightRadius: 50,
-    borderTopLeftRadius: 50,
-    borderTopRightRadius: 5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  dropletInner: {
-    width: 46,
-    height: 46,
-    backgroundColor: '#FFB000',
-    borderBottomLeftRadius: 23,
-    borderBottomRightRadius: 23,
-    borderTopLeftRadius: 23,
-    borderTopRightRadius: 2,
+  flameGlow: {
     position: 'absolute',
-    bottom: 16,
-    right: 16,
+    width: 148,
+    height: 148,
+    borderRadius: 74,
+    opacity: 0.2,
+  },
+  flameCoreWrap: {
+    position: 'absolute',
+    transform: [{ translateY: 20 }],
   },
   numbersContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   digitSlot: { alignItems: 'center', justifyContent: 'center', height: 90, overflow: 'hidden' },

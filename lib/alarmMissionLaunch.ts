@@ -15,36 +15,63 @@ export async function openAlarmFlowFromPendingId(
   pendingId: string,
   userId?: string | null
 ): Promise<boolean> {
-  if (!navigationRef.isReady()) return false;
-  if (shouldBlockAlarmKitRelaunch(navigationRef)) return false;
+  if (!navigationRef.isReady()) {
+    console.log('[RooAlarm] openAlarmFlow: navigationRef not ready, pendingId=', pendingId);
+    return false;
+  }
+  if (shouldBlockAlarmKitRelaunch(navigationRef)) {
+    console.log(
+      '[RooAlarm] openAlarmFlow: BLOCKED, currently on route',
+      navigationRef.getCurrentRoute()?.name,
+      'pendingId=',
+      pendingId
+    );
+    return false;
+  }
 
   if (pendingId === 'simulation') {
     const opened = navigateToAlarmMission(navigationRef, { isDaily: false, fromAlarmKit: true });
+    console.log('[RooAlarm] openAlarmFlow: simulation navigate result=', opened);
     if (opened) await clearPendingAlarmLaunch();
     return opened;
   }
 
-  if (!userId) return false;
+  if (!userId) {
+    console.log('[RooAlarm] openAlarmFlow: no userId, aborting for pendingId=', pendingId);
+    return false;
+  }
 
   const alarmId = Number(pendingId);
-  if (!Number.isFinite(alarmId)) return false;
+  if (!Number.isFinite(alarmId)) {
+    console.log('[RooAlarm] openAlarmFlow: pendingId not a valid alarm id', pendingId);
+    return false;
+  }
   if (wasAlarmCompletedToday(alarmId)) {
+    console.log('[RooAlarm] openAlarmFlow: alarm already completed today (in-memory), skipping', alarmId);
     await clearPendingAlarmLaunch();
     return false;
   }
 
-  const { data: alarms } = await supabase
+  const { data: alarms, error: fetchError } = await supabase
     .from('alarms')
     .select('*')
     .eq('user_id', userId)
     .order('id', { ascending: true });
 
+  if (fetchError) {
+    console.log('[RooAlarm] openAlarmFlow: fetch alarms error', fetchError.message, 'alarmId=', alarmId);
+  }
+
   const alarmRow = alarms?.find((row) => Number(row.id) === alarmId);
-  if (!alarmRow) return false;
+  if (!alarmRow) {
+    console.log('[RooAlarm] openAlarmFlow: alarm row NOT FOUND for id', alarmId, 'fetched count=', alarms?.length);
+    return false;
+  }
 
   const alarm = mapAlarmFromSupabase(alarmRow);
   const todayStr = new Date().toISOString().split('T')[0];
   if (alarm.lastCompletedDate === todayStr) {
+    console.log('[RooAlarm] openAlarmFlow: alarm already completed today (db), skipping', alarmId);
     await clearPendingAlarmLaunch();
     return false;
   }
@@ -53,6 +80,7 @@ export async function openAlarmFlowFromPendingId(
   await markAlarmTriggeredToday(alarm.id, userId);
 
   const opened = navigateToAlarmMission(navigationRef, { isDaily, alarm, fromAlarmKit: true });
+  console.log('[RooAlarm] openAlarmFlow: navigateToAlarmMission result=', opened, 'alarmId=', alarmId, 'isDaily=', isDaily);
   if (opened) await clearPendingAlarmLaunch();
   return opened;
 }

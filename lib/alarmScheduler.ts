@@ -406,15 +406,32 @@ const scheduleWithAlarmKit = async (alarm: Alarm, protectedDays: number[]): Prom
     return false;
   }
 
+  const scheduleAtMs = nextFire.getTime();
+  const attempt = async (): Promise<{ ok: boolean; error: string | null }> =>
+    serializeAlarmKit(async () => {
+      const res = await alarmKitModule!.scheduleAlarmAt!(key, scheduleAtMs, title, soundId);
+      const ok = typeof res === 'boolean' ? res : !!res?.ok;
+      const error = typeof res === 'object' ? res?.error ?? null : null;
+      return { ok, error };
+    });
+
   try {
-    const res = await alarmKitModule.scheduleAlarmAt(key, nextFire.getTime(), title, soundId);
-    const ok = typeof res === 'boolean' ? res : !!res?.ok;
-    const errorMsg = typeof res === 'object' ? res?.error : null;
+    let { ok, error } = await attempt();
+    // AlarmKit devuelve un Code=0 transitorio si otra operación tocó la misma alarma
+    // justo antes. Como ya está serializado, un único reintento basta para superarlo.
+    if (!ok) {
+      console.warn(
+        `[RooAlarm] scheduleWithAlarmKit: native scheduleAlarmAt FAILED for alarm ${key} (attempt 1). Error: ${
+          error ?? 'unknown'
+        }. Retrying…`
+      );
+      ({ ok, error } = await attempt());
+    }
 
     if (!ok) {
       console.warn(
-        `[RooAlarm] scheduleWithAlarmKit: native scheduleAlarmAt FAILED for alarm ${key}. Error: ${
-          errorMsg ?? 'unknown'
+        `[RooAlarm] scheduleWithAlarmKit: native scheduleAlarmAt FAILED for alarm ${key} (after retry). Error: ${
+          error ?? 'unknown'
         }`
       );
     } else {
@@ -434,7 +451,7 @@ export const cancelAlarmSchedule = async (alarmId: number | string) => {
 
   if (canUseAlarmKit()) {
     try {
-      await alarmKitModule?.cancelAlarm(key);
+      await serializeAlarmKit(() => alarmKitModule!.cancelAlarm(key));
     } catch (err) {
       console.warn('[RooAlarm] AlarmKit cancel error', err);
     }
@@ -677,28 +694,32 @@ export const retriggerManagedAlarm = async (
       }
 
       if (options?.immediate) {
-        const simOk = await alarmKitModule!.triggerSimulationNow(
-          title,
-          'Completa tu misión para parar la alarma',
-          soundId,
-          String(alarm.id),
+        const simOk = await serializeAlarmKit(() =>
+          alarmKitModule!.triggerSimulationNow(
+            title,
+            'Completa tu misión para parar la alarma',
+            soundId,
+            String(alarm.id),
+          )
         );
         if (simOk) return true;
         console.warn('[RooAlarm] triggerSimulationNow failed for mission timeout', alarm.id);
       } else {
         const nativeRetrigger = alarmKitModule?.retriggerAlarm;
         if (typeof nativeRetrigger === 'function') {
-          const ok = await nativeRetrigger(String(alarm.id), title);
+          const ok = await serializeAlarmKit(() => nativeRetrigger(String(alarm.id), title));
           if (ok) return true;
           console.warn('[RooAlarm] retriggerAlarm returned false for alarm', alarm.id);
         }
       }
 
-      const simOk = await alarmKitModule!.triggerSimulationNow(
-        title,
-        'Completa tu misión para parar la alarma',
-        soundId,
-        String(alarm.id),
+      const simOk = await serializeAlarmKit(() =>
+        alarmKitModule!.triggerSimulationNow(
+          title,
+          'Completa tu misión para parar la alarma',
+          soundId,
+          String(alarm.id),
+        )
       );
       if (simOk) return true;
       console.warn('[RooAlarm] triggerSimulationNow fallback failed for alarm', alarm.id);
@@ -760,11 +781,13 @@ export const triggerSimulationNow = async (soundId?: string): Promise<Simulation
 
     try {
       const resolvedSound = soundId || DEFAULT_SOUND_ID;
-      const sent = await alarmKitModule.triggerSimulationNow(
-        'Roo Alarm',
-        'Simulación de alarma',
-        resolvedSound,
-        '',
+      const sent = await serializeAlarmKit(() =>
+        alarmKitModule.triggerSimulationNow(
+          'Roo Alarm',
+          'Simulación de alarma',
+          resolvedSound,
+          '',
+        )
       );
       if (sent) return { mode: 'alarmkit' };
     } catch {

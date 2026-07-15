@@ -1,4 +1,7 @@
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+// Alias que Google mantiene siempre apuntando al flash-lite estable vigente.
+// Evita el 404 "no longer available" de versiones fijas (p.ej. gemini-2.5-flash-lite)
+// y tiene su propio contador de cuota diaria, separado del de 'gemini-2.5-flash'.
+const DEFAULT_MODEL = 'gemini-flash-lite-latest';
 
 // Clave de Google Cloud Console (Generative Language API).
 // Endpoint estándar de Gemini API — compatible con claves de GCP, no solo AI Studio.

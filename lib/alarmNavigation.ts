@@ -178,7 +178,10 @@ export const navigateToAlarmMission = (
 ) => {
   if (!navigationRef.isReady()) return false;
   const routeName = navigationRef.getCurrentRoute()?.name;
-  if (routeName === 'AlarmMission' || routeName === 'Camera') return false;
+  if (routeName === 'AlarmMission' || routeName === 'Camera') {
+    console.log('[RooAlarm] navigateToAlarmMission: already on', routeName, '- skipping navigation');
+    return false;
+  }
 
   if (params.fromAlarmKit) {
     navigationRef.dispatch(
