@@ -4,6 +4,7 @@ import { DEFAULT_PERSONALIZED_MISSION } from '../constants/missions';
 import { mapAlarmFromSupabase } from './alarmNavigation';
 import { getDailyAlarm } from './dailyAlarm';
 import { fetchDailyAlarmRow } from './dailyAlarmSupabase';
+import { unmarkAlarmCompletedToday } from './finalizeAlarmSuccess';
 import { supabase } from './supabase';
 import { withTimeout } from './withTimeout';
 
@@ -50,8 +51,8 @@ export function buildAlarmSavePayload(
     enabled_missions: alarm.enabledMissions?.length ? alarm.enabledMissions : [],
     specific_date: isDaily ? null : (alarm.specificDate || null),
     enabled: alarm.on ?? true,
-    last_triggered_date: alarm.lastTriggeredDate || null,
-    last_completed_date: alarm.lastCompletedDate || null,
+    last_triggered_date: isDaily ? (alarm.lastTriggeredDate || null) : null,
+    last_completed_date: isDaily ? (alarm.lastCompletedDate || null) : null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -125,7 +126,11 @@ export async function persistAlarmRecord(
       const { data, error } = await runSaveQuery(
         supabase.from('alarms').insert(payload).select().single()
       );
-      if (!error && data) return mapAlarmFromSupabase(data);
+      if (!error && data) {
+        const saved = mapAlarmFromSupabase(data);
+        unmarkAlarmCompletedToday(saved.id);
+        return saved;
+      }
       lastError = error;
       if (options?.isDaily) {
         const existing = await withTimeout(fetchDailyAlarmRow(userId), 4000, null);
@@ -145,7 +150,11 @@ export async function persistAlarmRecord(
           .select()
           .single()
       );
-      if (!error && data) return mapAlarmFromSupabase(data);
+      if (!error && data) {
+        const saved = mapAlarmFromSupabase(data);
+        unmarkAlarmCompletedToday(saved.id);
+        return saved;
+      }
       lastError = error;
       if (options?.isDaily && error?.code === 'PGRST116') {
         shouldCreate = true;

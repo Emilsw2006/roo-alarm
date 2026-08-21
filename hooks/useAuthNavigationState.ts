@@ -9,16 +9,19 @@ import {
   ProfileNameStatus,
   resolveAuthEntryForSession,
   shouldEnterMainApp,
+  resolveHasPremiumAccess,
 } from '../lib/onboardingNavigation';
 
 async function loadProfileChecks(userId: string) {
-  const [complete, hasName] = await Promise.all([
+  const [complete, hasName, hasPremium] = await Promise.all([
     isOnboardingCompleteForUser(userId),
     hasUserProfileName(userId),
+    resolveHasPremiumAccess(userId, false),
   ]);
   return {
     profileStatus: (complete ? 'complete' : 'incomplete') as OnboardingProfileStatus,
     profileNameStatus: (hasName ? 'complete' : 'incomplete') as ProfileNameStatus,
+    hasPremium,
   };
 }
 
@@ -27,6 +30,7 @@ export function useAuthNavigationState() {
   const { hasPremiumAccess, loading: subscriptionLoading } = useSubscription();
   const [profileStatus, setProfileStatus] = useState<OnboardingProfileStatus>('loading');
   const [profileNameStatus, setProfileNameStatus] = useState<ProfileNameStatus>('loading');
+  const [authHasPremium, setAuthHasPremium] = useState<boolean>(false);
 
   const refreshProfileChecks = useCallback(async () => {
     if (!session?.user?.id) {
@@ -41,6 +45,7 @@ export function useAuthNavigationState() {
     const result = await loadProfileChecks(session.user.id);
     setProfileStatus(result.profileStatus);
     setProfileNameStatus(result.profileNameStatus);
+    setAuthHasPremium(result.hasPremium);
   }, [session?.user?.id]);
 
   useEffect(() => {
@@ -54,11 +59,13 @@ export function useAuthNavigationState() {
     return () => setAuthNavigationRefreshListener(null);
   }, [refreshProfileChecks]);
 
+  const effectivePremium = hasPremiumAccess || authHasPremium;
+
   const showMain = shouldEnterMainApp(
     !!session,
     profileStatus,
     profileNameStatus,
-    hasPremiumAccess
+    effectivePremium
   );
   const loading =
     authLoading ||
@@ -69,13 +76,13 @@ export function useAuthNavigationState() {
     !!session,
     profileStatus,
     profileNameStatus,
-    hasPremiumAccess
+    effectivePremium
   );
 
   return {
     loading,
     session,
-    hasPremiumAccess,
+    hasPremiumAccess: effectivePremium,
     profileStatus,
     profileNameStatus,
     showMain,

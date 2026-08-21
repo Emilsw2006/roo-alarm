@@ -132,6 +132,13 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       const premium = hasPremium(info);
       setSimulatedPremiumAccess(premium);
       await persistPremiumFlag(userId, premium);
+      
+      const { data: currentDb } = await supabase.from('user_settings').select('is_subscribed').eq('user_id', userId).maybeSingle();
+      if (!premium && currentDb?.is_subscribed) {
+        // No sobrescribir a false si en la DB pone que sí está suscrito (ej. concedido manualmente).
+        return;
+      }
+      
       await persistSubscriptionState(userId, info);
     },
     [persistPremiumFlag, persistSubscriptionState]
@@ -148,10 +155,18 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         setCustomerInfo(null);
         setPackages([]);
         setError(null);
-        const persisted = await AsyncStorage.getItem(premiumFlagKey(userId));
-        if (persisted === '1') {
-          await syncSubscriptionToSupabase(userId, buildDevSubscriptionPayload());
-          await refreshDbSubscription(userId);
+        // Solo en desarrollo. Sin este guard, un build de release al que le falte
+        // la API key de RevenueCat (p. ej. EAS sin los secrets configurados) entra
+        // aquí en silencio y regala premium, escribiendo además una suscripción
+        // falsa en Supabase. En release debe fallar cerrado: sin key, sin premium.
+        if (__DEV__) {
+          const persisted = await AsyncStorage.getItem(premiumFlagKey(userId));
+          if (persisted === '1') {
+            await syncSubscriptionToSupabase(userId, buildDevSubscriptionPayload());
+            await refreshDbSubscription(userId);
+          }
+        } else {
+          setError('Falta configurar la API key de RevenueCat.');
         }
         return;
       }

@@ -10,6 +10,10 @@ export function wasAlarmCompletedToday(alarmId: number) {
   return completedTodayIds.has(alarmId);
 }
 
+export function unmarkAlarmCompletedToday(alarmId: number) {
+  completedTodayIds.delete(alarmId);
+}
+
 /** Cancela re-disparos y marca la alarma como completada hoy (no debe volver a sonar). */
 export async function finalizeAlarmSuccess(alarm: Alarm | undefined, userId?: string | null) {
   if (!alarm?.id) return;

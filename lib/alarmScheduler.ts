@@ -420,14 +420,16 @@ export const scheduleAlarm = async (
 
   let notificationIds: string[] = [];
   const permissionGranted = await ensureNotificationPermissions();
-  if (permissionGranted) {
-    notificationIds = await scheduleLocalNotification(alarm, scheduleDays);
-    if (notificationIds.length === 0) {
-      console.warn('[RooAlarm] No local notifications scheduled for alarm', key);
-    }
-  } else {
-    console.warn('[RooAlarm] Notification permission denied while scheduling alarm', key);
-  }
+  
+  // El usuario solicitó eliminar notificaciones y depender solo de AlarmKit.
+  // if (permissionGranted) {
+  //   notificationIds = await scheduleLocalNotification(alarm, scheduleDays);
+  //   if (notificationIds.length === 0) {
+  //     console.warn('[RooAlarm] No local notifications scheduled for alarm', key);
+  //   }
+  // } else {
+  //   console.warn('[RooAlarm] Notification permission denied while scheduling alarm', key);
+  // }
 
   let usesAlarmKit = false;
   if (Platform.OS === 'ios' && capability.capability === 'alarmkit') {
@@ -440,11 +442,14 @@ export const scheduleAlarm = async (
     }
   }
 
-  if (!usesAlarmKit && notificationIds.length === 0) {
-    if (!permissionGranted) {
-      return { ok: false, reason: 'notifications_denied' };
-    }
-    return { ok: false, reason: 'notification_schedule_failed' };
+  // En iOS las notificaciones locales están desactivadas, así que sin AlarmKit no
+  // queda nada programado: la alarma no sonará. Antes se devolvía ok:true y la UI
+  // mostraba la alarma activa, que es la peor forma de fallar en un despertador.
+  const nothingScheduled =
+    Platform.OS === 'ios' && !usesAlarmKit && notificationIds.length === 0;
+
+  if (nothingScheduled) {
+    console.warn('[RooAlarm] AlarmKit did not schedule and no notification fallback exists', key);
   }
 
   registry[key] = {
@@ -460,6 +465,11 @@ export const scheduleAlarm = async (
   console.log(
     `[RooAlarm] Scheduled alarm ${key} mode=${mode} next=${nextFire?.toISOString() ?? 'none'} notifications=${notificationIds.length}`
   );
+
+  if (nothingScheduled) {
+    return { ok: false, reason: 'alarmkit_unavailable' };
+  }
+
   return { ok: true, mode };
 };
 
@@ -487,6 +497,9 @@ export async function syncAlarmSchedules(
     const result = await scheduleAlarm(alarm, { protectedDays });
     results.push(result);
   }
+
+  // Sincronizar con el Widget de iOS
+  import('./widgetSync').then(m => m.syncWidgetNextAlarm(alarms)).catch(() => {});
 
   return results;
 }
@@ -555,6 +568,21 @@ export const consumePendingDismissRetrigger = async (): Promise<number | null> =
   }
 };
 
+/**
+ * AlarmKit falla con Code=0 si se le programan alarmas concurrentemente, así que
+ * todas las llamadas nativas de programación pasan en fila por esta cadena.
+ */
+let alarmKitLock: Promise<unknown> = Promise.resolve();
+
+function withAlarmKitLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = alarmKitLock.then(task, task);
+  alarmKitLock = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export const retriggerManagedAlarm = async (
   alarm: Alarm,
   options?: { immediate?: boolean },
@@ -573,32 +601,34 @@ export const retriggerManagedAlarm = async (
         return retriggerWithNotificationFallback(alarm, delaySeconds);
       }
 
-      if (options?.immediate) {
-        const simOk = await alarmKitModule!.triggerSimulationNow(
-          title,
-          'Completa tu misión para parar la alarma',
-          soundId,
-          String(alarm.id),
+      const triggerNow = () =>
+        withAlarmKitLock(() =>
+          alarmKitModule!.triggerSimulationNow(
+            title,
+            'Completa tu misión para parar la alarma',
+            soundId,
+            String(alarm.id),
+          ),
         );
+
+      if (options?.immediate) {
+        // Sin fallback: el fallback sería esta misma llamada con los mismos
+        // argumentos, y repetirla al instante hace fallar a AlarmKit con Code=0.
+        const simOk = await triggerNow();
         if (simOk) return true;
         console.warn('[RooAlarm] triggerSimulationNow failed for mission timeout', alarm.id);
       } else {
         const nativeRetrigger = alarmKitModule?.retriggerAlarm;
         if (typeof nativeRetrigger === 'function') {
-          const ok = await nativeRetrigger(String(alarm.id), title);
+          const ok = await withAlarmKitLock(() => nativeRetrigger(String(alarm.id), title));
           if (ok) return true;
           console.warn('[RooAlarm] retriggerAlarm returned false for alarm', alarm.id);
         }
-      }
 
-      const simOk = await alarmKitModule!.triggerSimulationNow(
-        title,
-        'Completa tu misión para parar la alarma',
-        soundId,
-        String(alarm.id),
-      );
-      if (simOk) return true;
-      console.warn('[RooAlarm] triggerSimulationNow fallback failed for alarm', alarm.id);
+        const simOk = await triggerNow();
+        if (simOk) return true;
+        console.warn('[RooAlarm] triggerSimulationNow fallback failed for alarm', alarm.id);
+      }
     } catch (err) {
       console.warn('[RooAlarm] retrigger AlarmKit error', err);
     }

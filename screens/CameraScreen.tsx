@@ -237,8 +237,7 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
     }
 
     setTimeout(() => {
-      const willPass = !isDaily || failCount >= 2;
-      finishWithResult(willPass);
+      finishWithResult(true);
     }, 2200);
   };
 
@@ -248,7 +247,14 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
     setRescueTokens(rescueTokens - 1);
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-      await supabase.from('user_settings').update({ rescue_tokens: rescueTokens - 1 }).eq('user_id', user.id);
+      // El decremento lo hace el servidor: atómico y con guarda de saldo.
+      const { data: remaining, error } = await supabase.rpc('spend_rescue_token');
+      if (error) {
+        console.log('spend_rescue_token failed', error);
+        setRescueTokens(rescueTokens);
+      } else if (typeof remaining === 'number') {
+        setRescueTokens(remaining);
+      }
     }
     setShowRescuePrompt(false);
     setRescueReason(null);

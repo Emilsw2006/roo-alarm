@@ -10,7 +10,7 @@ import { fetchSubscriptionFromSupabase } from './subscriptionSupabase';
 
 const premiumFlagKey = (userId: string) => `rooalarm.premium.${userId}`;
 
-async function resolveHasPremiumAccess(userId: string, cached: boolean): Promise<boolean> {
+export async function resolveHasPremiumAccess(userId: string, cached: boolean): Promise<boolean> {
   if (cached) return true;
 
   try {
@@ -67,19 +67,15 @@ export async function resolvePostAuthDestination(
     return hasName ? 'main' : POST_PAY_PROFILE_STEP;
   }
 
-  if (resumePaywall) {
-    return PAYWALL_START_STEP;
+  if (!profileComplete) {
+    if (fromOnboarding) {
+      return CHART_STEP;
+    }
+    return FIRST_ONBOARDING_STEP;
   }
 
-  if (profileComplete) {
-    return PAYWALL_START_STEP;
-  }
-
-  if (fromOnboarding) {
-    return CHART_STEP;
-  }
-
-  return FIRST_ONBOARDING_STEP;
+  // Si el perfil está completo pero no tiene premium, siempre al paywall
+  return PAYWALL_START_STEP;
 }
 
 export function resolveAuthEntryForSession(

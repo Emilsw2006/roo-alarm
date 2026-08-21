@@ -332,8 +332,8 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
     const daily = getDailyAlarm(alarmList);
 
     if (daily && isDailyAlarmLockedToday(daily)) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      return;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Selection);
+      // Removed early return to allow editing tomorrow's time
     }
 
     if (daily) {
@@ -801,8 +801,7 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
   };
 
   const getDailyWidgetAmpm = () => {
-    if (!dailyAlarm) return undefined;
-    return dailyAlarm.ampm;
+    return undefined;
   };
 
   const getDailyLockedSubtitle = () => {

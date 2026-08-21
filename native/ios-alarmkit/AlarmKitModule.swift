@@ -1,5 +1,6 @@
 import Foundation
 import React
+import WidgetKit
 
 #if canImport(AlarmKit)
 import AlarmKit
@@ -140,6 +141,48 @@ class AlarmKitModule: NSObject {
     }
 #endif
     resolve(nil)
+  }
+
+  @objc
+  func syncWidgetStreak(
+    _ streak: NSNumber,
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    if let defaults = UserDefaults(suiteName: "group.com.roo.alarm") {
+      defaults.set(streak.intValue, forKey: "widget_streak")
+      #if canImport(WidgetKit)
+      if #available(iOS 14.0, *) {
+        WidgetCenter.shared.reloadAllTimelines()
+      }
+      #endif
+      resolve(true)
+    } else {
+      reject("WIDGET_SYNC_ERROR", "Could not open App Group UserDefaults", nil)
+    }
+  }
+
+  @objc
+  func syncWidgetNextAlarm(
+    _ nextAlarmTime: String?,
+    nextAlarmLabel: String?,
+    isDaily: NSNumber,
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    if let defaults = UserDefaults(suiteName: "group.com.roo.alarm") {
+      defaults.set(nextAlarmTime, forKey: "widget_next_alarm_time")
+      defaults.set(nextAlarmLabel, forKey: "widget_next_alarm_label")
+      defaults.set(isDaily.boolValue, forKey: "widget_is_daily")
+      #if canImport(WidgetKit)
+      if #available(iOS 14.0, *) {
+        WidgetCenter.shared.reloadAllTimelines()
+      }
+      #endif
+      resolve(true)
+    } else {
+      reject("WIDGET_SYNC_ERROR", "Could not open App Group UserDefaults", nil)
+    }
   }
 
   @objc

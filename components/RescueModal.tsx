@@ -20,7 +20,19 @@ export default function RescueModal({ visible, onUseToken, onAcceptPunishment, t
       <View style={styles.overlay}>
         <View style={[styles.modalBox, { backgroundColor: colors.isDark ? colors.surface : '#FFF' }]}>
           <Icon name="bell" size={60} color="#FF3B30" variant="solid" />
-          <Text style={[styles.title, { color: colors.text }]}>{t('modals.streakDanger')}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+            <Text style={[styles.title, { color: colors.text, marginTop: 0, marginBottom: 0, marginRight: 8 }]}>{t('modals.streakDanger')}</Text>
+            <TouchableOpacity onPress={() => {
+              import('react-native').then(({ Alert }) => {
+                Alert.alert(
+                  t('settingsScreen.rescueTokensInfoTitle'),
+                  t('settingsScreen.rescueTokensInfoBody')
+                );
+              });
+            }}>
+              <Icon name="info" size={24} color={colors.textDim} stroke={2} />
+            </TouchableOpacity>
+          </View>
           <Text style={[styles.description, { color: colors.textDim }]}>
             {t('modals.streakDangerBody')} ({tokensAvailable})
           </Text>

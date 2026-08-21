@@ -30,4 +30,4 @@ export const parseDateOnlyIso = (iso: string) => {
   return new Date(year, month - 1, day);
 };
 
-export const formatAlarmClockLabel = (alarm: Alarm) => `${alarm.time} ${alarm.ampm}`;
+export const formatAlarmClockLabel = (alarm: Alarm) => `${alarm.time}`;
