@@ -40,14 +40,6 @@ enum RooAlarmConfigurationFactory {
   /// Full UI: Desbloquear (rojo/blanco vía tintColor) + retrigger al cerrar/deslizar.
   static func makeAlertPresentation(title: String) -> AlarmPresentation.Alert {
     let alertTitle = LocalizedStringResource(stringLiteral: title.isEmpty ? "Roo Alarm" : title)
-    if #available(iOS 26.1, *) {
-      return AlarmPresentation.Alert(
-        title: alertTitle,
-        stopButton: slideStopButton,
-        secondaryButton: unlockButton,
-        secondaryButtonBehavior: .custom
-      )
-    }
     return AlarmPresentation.Alert(
       title: alertTitle,
       stopButton: slideStopButton,
@@ -57,18 +49,17 @@ enum RooAlarmConfigurationFactory {
   }
 
   /// Minimal presentation used when the full config cannot be scheduled.
+  /// Always pass `stopButton`: current AlarmKit SDKs require it (title-only init fails to compile).
   static func makeSimpleAlertPresentation(title: String) -> AlarmPresentation.Alert {
     let alertTitle = LocalizedStringResource(stringLiteral: title.isEmpty ? "Roo Alarm" : title)
-    if #available(iOS 26.1, *) {
-      return AlarmPresentation.Alert(title: alertTitle)
-    }
+    let stop = AlarmButton(
+      text: "Detener",
+      textColor: .white,
+      systemImageName: "stop.circle.fill"
+    )
     return AlarmPresentation.Alert(
       title: alertTitle,
-      stopButton: AlarmButton(
-        text: "Detener",
-        textColor: .white,
-        systemImageName: "stop.circle.fill"
-      ),
+      stopButton: stop,
       secondaryButtonBehavior: .countdown
     )
   }

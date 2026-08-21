@@ -26,7 +26,12 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -49,6 +54,12 @@
       "expo-asset",
       "./plugins/withAlarmKit.js",
       "./plugins/withStoreKit.js"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "b0b7b20a-9a9c-4c17-a91f-25e752649a85"
+      }
+    },
+    "owner": "oneliveapp"
   }
 }
