@@ -141,6 +141,17 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
     }
 
     if (!isDaily) {
+      if (user) {
+        const { data } = await supabase
+          .from('user_settings')
+          .select('mission_mode, enabled_missions')
+          .eq('user_id', user.id)
+          .single();
+        if (data?.mission_mode === 'roulette') {
+          startRoulettePool(Array.isArray(data.enabled_missions) ? data.enabled_missions : null);
+          return;
+        }
+      }
       setMissionMode('personalized');
       setMission(getMission(alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
       return;

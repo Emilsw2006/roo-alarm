@@ -14,7 +14,7 @@ import { supabase } from '../lib/supabase';
 import { finishMissionTimeout, onMissionTimerExpired } from '../lib/missionTimeout';
 import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
 import { useAuth } from '../constants/AuthContext';
-import { isGeminiMissionVerifyEnabled } from '../lib/geminiConfig';
+import { isAiMissionVerifyEnabled } from '../lib/geminiConfig';
 import { verifyMissionPhoto } from '../lib/verifyMissionPhoto';
 
 interface CameraScreenProps {
@@ -214,7 +214,7 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
       }
     };
 
-    if (isGeminiMissionVerifyEnabled() && photoBase64) {
+    if (isAiMissionVerifyEnabled() && photoBase64) {
       try {
         const copy = missionCopy(mission.id);
         const result = await verifyMissionPhoto({

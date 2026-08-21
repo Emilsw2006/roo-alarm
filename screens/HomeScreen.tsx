@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Animated, useWindowDimensions, AppState } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Animated, useWindowDimensions, AppState, Alert, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useColors } from '../constants/ThemeContext';
@@ -9,7 +9,7 @@ import { supabase } from '../lib/supabase';
 import { Alarm } from '../constants/data';
 import { DEFAULT_ENABLED_MISSIONS, DEFAULT_PERSONALIZED_MISSION, getMission, MissionMode, normalizeMissionId } from '../constants/missions';
 import { FONT_FAMILY } from '../constants/theme';
-import { cancelAlarmSchedule, scheduleAlarm, syncAlarmSchedules, requestAlarmPermissions } from '../lib/alarmScheduler';
+import { cancelAlarmSchedule, scheduleAlarm, syncAlarmSchedules, requestAlarmPermissions, isAlarmScheduled, isAlarmKitManaged } from '../lib/alarmScheduler';
 import { MISSION_RETRIGGER_GUARD_MS } from '../lib/retriggerGuard';
 import { ensureInitialDailyAlarm, clockToTargetWakeTime } from '../lib/persistOnboarding';
 import { markDailyCompletedToday, fetchDailyAlarmRow, purgeDuplicateDailyAlarms } from '../lib/dailyAlarmSupabase';
@@ -142,6 +142,14 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
     const daily = getDailyAlarm(alarmList);
     if (!daily?.on) return;
 
+    // If already scheduled via AlarmKit, skip to avoid cancelling and re-registering
+    const alreadyScheduled = await isAlarmScheduled(daily.id);
+    const alreadyAlarmKit = isAlarmKitManaged(daily.id);
+    if (alreadyScheduled && alreadyAlarmKit) {
+      console.log('[RooAlarm] ensureDailyAlarmScheduled: daily already active in AlarmKit, skipping', daily.id);
+      return;
+    }
+
     await requestAlarmPermissions();
 
     try {
@@ -163,10 +171,12 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
 
     if (data && data.length > 0) {
       const mappedAlarms = data.map(mapAlarmFromSupabase);
+      console.log('[RooAlarm] fetchAlarms count:', mappedAlarms.length, 'ids:', mappedAlarms.map(a => a.id));
       setAlarms(mappedAlarms);
       return mappedAlarms;
     }
 
+    console.log('[RooAlarm] fetchAlarms returned empty or null:', data);
     if (error) {
       console.log('Load alarms failed', error);
       return [];
@@ -636,6 +646,17 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
       return t('alarmNotScheduled');
     };
 
+    const showAlarmKitPermissionAlert = () => {
+      Alert.alert(
+        '⚠️ Permiso necesario',
+        'Roo Alarm necesita permiso de Alarmas para que tu alarma funcione a pantalla completa. Ve a Ajustes y actívalo.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Abrir Ajustes', onPress: () => Linking.openSettings() },
+        ]
+      );
+    };
+
     const syncNativeSchedule = async (savedAlarm: Alarm) => {
       await requestAlarmPermissions();
       const days = protectedDaysRef.current;
@@ -644,7 +665,10 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
         if (!result.ok) {
           throw new Error(scheduleFailureMessage(result.reason));
         }
-        console.log('[RooAlarm] Scheduled alarm', savedAlarm.id, result.mode);
+        if (result.ok && 'mode' in result && result.mode === 'alarmkit_permission_denied') {
+          showAlarmKitPermissionAlert();
+        }
+        console.log('[RooAlarm] Scheduled alarm', savedAlarm.id, (result as any).mode);
       } else {
         await cancelAlarmSchedule(savedAlarm.id);
       }
@@ -753,6 +777,16 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
           const result = await scheduleAlarm(savedAlarm, { protectedDays });
           if (!result.ok) {
             console.warn('[RooAlarm] Toggle schedule failed', result.reason);
+          } else if (result.mode === 'alarmkit_permission_denied') {
+            // Permission was denied — show alert with link to Settings
+            Alert.alert(
+              '⚠️ Permiso necesario',
+              'Roo Alarm necesita permiso de Alarmas para que tu alarma funcione a pantalla completa. Ve a Ajustes y actívalo.',
+              [
+                { text: 'Cancelar', style: 'cancel' },
+                { text: 'Abrir Ajustes', onPress: () => Linking.openSettings() },
+              ]
+            );
           }
         } else {
           await cancelAlarmSchedule(savedAlarm.id);

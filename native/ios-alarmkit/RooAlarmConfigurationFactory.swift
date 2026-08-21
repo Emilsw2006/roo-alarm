@@ -29,10 +29,12 @@ enum RooAlarmConfigurationFactory {
     )
   }
 
-  /// Sin postAlert en la alarma programada: el re-disparo lo gestiona RooAlarmSlideDismissIntent
-  /// (evita que iOS muestre solo una notificación/countdown al deslizar).
-  static var scheduledAlarmCountdown: Alarm.CountdownDuration {
-    Alarm.CountdownDuration(preAlert: nil, postAlert: nil)
+  /// Alarma puramente programada: sin countdown. Apple's `.alarm(schedule:)` factory omite
+  /// countdownDuration por completo, así que pasamos `nil` (no un CountdownDuration vacío, que
+  /// AlarmKit puede interpretar como countdown degenerado y no llegar a sonar en la fecha fija).
+  /// El re-disparo al deslizar lo gestiona RooAlarmSlideDismissIntent.
+  static var scheduledAlarmCountdown: Alarm.CountdownDuration? {
+    nil
   }
 
   /// Full UI: Desbloquear (rojo/blanco vía tintColor) + retrigger al cerrar/deslizar.

@@ -6,10 +6,11 @@ import { useColors } from '../constants/ThemeContext';
 import { useLanguage } from '../constants/LanguageContext';
 import { FONT_FAMILY } from '../constants/theme';
 import SquishyButton from '../components/SquishyButton';
+import Icon from '../components/Icon';
 import * as Haptics from 'expo-haptics';
 import { configurePlaybackAudio, createRooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
 import { resetToHome } from '../lib/alarmNavigation';
-import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
+import { finalizeAlarmSuccess, wasAlarmCompletedToday } from '../lib/finalizeAlarmSuccess';
 import { useAuth } from '../constants/AuthContext';
 import { Alarm } from '../constants/data';
 
@@ -26,8 +27,12 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
   const { t } = useLanguage();
   const { user } = useAuth();
 
-  const oldStreakNum = isDaily ? streak : 0;
-  const newStreak = isDaily ? streak + 1 : streak;
+  const isSimulation = !isDaily && alarm === undefined;
+  const alreadyCompleted = alarm?.id ? wasAlarmCompletedToday(alarm.id) : false;
+  const showStreakAnimation = isDaily && !alreadyCompleted;
+
+  const oldStreakNum = showStreakAnimation ? streak : 0;
+  const newStreak = showStreakAnimation ? streak + 1 : streak;
 
   const flameScale = useRef(new Animated.Value(0.3)).current;
   const flameOpacity = useRef(new Animated.Value(0.4)).current;
@@ -40,13 +45,15 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
   const wobbleAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const btnFade = useRef(new Animated.Value(0)).current;
+  const plusOneOpacity = useRef(new Animated.Value(0)).current;
+  const plusOneTranslateY = useRef(new Animated.Value(20)).current;
 
   useEffect(() => {
     void finalizeAlarmSuccess(alarm, user?.id);
   }, [alarm?.id, user?.id]);
 
   useEffect(() => {
-    if (!isDaily) {
+    if (!showStreakAnimation) {
       Animated.timing(btnFade, { toValue: 1, duration: 400, useNativeDriver: true }).start();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       return;
@@ -94,9 +101,12 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
         Animated.timing(oldNumTranslateY, { toValue: -80, duration: 900, useNativeDriver: true }),
         Animated.timing(newNumOpacity, { toValue: 1, duration: 900, useNativeDriver: true }),
         Animated.timing(newNumTranslateY, { toValue: 0, duration: 900, useNativeDriver: true }),
+        Animated.timing(plusOneOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(plusOneTranslateY, { toValue: -40, duration: 1000, useNativeDriver: true }),
       ]),
     ]).start(() => {
       Animated.timing(btnFade, { toValue: 1, duration: 700, useNativeDriver: true }).start();
+      Animated.timing(plusOneOpacity, { toValue: 0, duration: 400, delay: 600, useNativeDriver: true }).start();
     });
 
     setTimeout(() => {
@@ -105,9 +115,15 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
     }, 1850);
   }, []);
 
-  const wobbleRotation = wobbleAnim.interpolate({
-    inputRange: [-1, 1],
-    outputRange: ['-55deg', '-35deg'],
+  // Parpadeo sutil de llama: antes tuneado para la forma de gota (-55/-35deg),
+  // ahora usamos el icono de fuego real así que el rango debe ser mucho más leve.
+  const flameFlicker = wobbleAnim.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: ['-4deg', '0deg', '4deg'],
+  });
+  const flameSquash = wobbleAnim.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: [0.96, 1, 1.05],
   });
 
   const pulseScale = pulseAnim.interpolate({
@@ -126,17 +142,21 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
       <StatusBar style="dark" />
 
       <View style={styles.center}>
-        {isDaily ? (
+        {showStreakAnimation ? (
         <Animated.View style={[styles.flameContainer, { opacity: flameOpacity, transform: [{ scale: flameScale }, { scale: pulseScale }] }]}>
-          <Animated.View style={[styles.dropletOuter, { backgroundColor: colors.accSolid, shadowColor: colors.accSolid, transform: [{ rotate: wobbleRotation }] }]}>
-            <View style={styles.dropletInner} />
+          <View style={[styles.flameGlow, { backgroundColor: colors.accSolid }]} />
+          <Animated.View style={{ transform: [{ rotate: flameFlicker }, { scaleY: flameSquash }] }}>
+            <Icon name="flame" size={104} color={colors.accSolid} variant="solid" />
           </Animated.View>
+          <View style={styles.flameCoreWrap} pointerEvents="none">
+            <Icon name="flame" size={48} color="#FFD54F" variant="solid" />
+          </View>
         </Animated.View>
         ) : (
           <Text style={{ fontSize: 64, marginBottom: 12 }}>✅</Text>
         )}
 
-        {isDaily ? (
+        {showStreakAnimation ? (
         <Animated.View style={[styles.numbersContainer, { opacity: masterOpacity, transform: [{ scale: masterScale }] }]}>
           {paddedNew.split('').map((newChar, i) => {
             const oldChar = paddedOld[i];
@@ -161,6 +181,9 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
               </View>
             );
           })}
+          <Animated.Text style={[styles.plusOne, { opacity: plusOneOpacity, transform: [{ translateY: plusOneTranslateY }] }]}>
+            +1
+          </Animated.Text>
         </Animated.View>
         ) : (
           <Text style={[styles.bigNumber, { fontSize: 28, textAlign: 'center', paddingHorizontal: 24 }]}>
@@ -174,7 +197,7 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
           color="#000000"
           shadowColor="rgba(0,0,0,0.4)"
           onPress={() =>
-            resetToHome(navigation, isDaily ? { completedDaily: true, skipAlarmSync: true } : { skipAlarmSync: true })
+            resetToHome(navigation, isDaily ? { completedDaily: true } : {})
           }
           contentStyle={styles.startBtnContent}
         >
@@ -189,31 +212,16 @@ const styles = StyleSheet.create({
   screen: { flex: 1, alignItems: 'center', backgroundColor: '#ffffff' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
   flameContainer: { width: 140, height: 140, alignItems: 'center', justifyContent: 'center' },
-  dropletOuter: {
-    width: 100,
-    height: 100,
-    borderBottomLeftRadius: 50,
-    borderBottomRightRadius: 50,
-    borderTopLeftRadius: 50,
-    borderTopRightRadius: 5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  dropletInner: {
-    width: 46,
-    height: 46,
-    backgroundColor: '#FFB000',
-    borderBottomLeftRadius: 23,
-    borderBottomRightRadius: 23,
-    borderTopLeftRadius: 23,
-    borderTopRightRadius: 2,
+  flameGlow: {
     position: 'absolute',
-    bottom: 16,
-    right: 16,
+    width: 148,
+    height: 148,
+    borderRadius: 74,
+    opacity: 0.2,
+  },
+  flameCoreWrap: {
+    position: 'absolute',
+    transform: [{ translateY: 20 }],
   },
   numbersContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   digitSlot: { alignItems: 'center', justifyContent: 'center', height: 90, overflow: 'hidden' },
@@ -222,4 +230,5 @@ const styles = StyleSheet.create({
   bottomBtn: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: 24 },
   startBtnContent: { height: 68, alignItems: 'center', justifyContent: 'center', paddingVertical: 0 },
   startBtnText: { color: '#ffffff', fontSize: 17, lineHeight: 24, fontFamily: FONT_FAMILY.bold },
+  plusOne: { position: 'absolute', right: -40, top: 0, fontSize: 32, fontFamily: FONT_FAMILY.black, color: '#FFB000' },
 });

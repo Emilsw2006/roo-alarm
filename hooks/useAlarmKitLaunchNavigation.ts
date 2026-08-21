@@ -15,16 +15,21 @@ export function useAlarmKitLaunchNavigation(
   const handleLaunch = useCallback(async () => {
     if (!enabled || Platform.OS !== 'ios' || handlingRef.current) return;
 
-    await capturePendingAlarmLaunch();
+    const pendingId = await capturePendingAlarmLaunch();
+    if (pendingId) console.log('[RooAlarm] launchNav: pending id captured', pendingId, 'mainReady=', mainReady);
 
     if (!mainReady) return;
 
     const navigation = navigationRef.current;
-    if (!navigation?.isReady()) return;
+    if (!navigation?.isReady()) {
+      if (pendingId) console.log('[RooAlarm] launchNav: navigation not ready yet, will retry');
+      return;
+    }
 
     handlingRef.current = true;
     try {
-      await tryOpenPendingAlarmFlow(navigation, userId);
+      const opened = await tryOpenPendingAlarmFlow(navigation, userId);
+      if (pendingId) console.log('[RooAlarm] launchNav: tryOpenPendingAlarmFlow result=', opened);
     } finally {
       handlingRef.current = false;
     }
