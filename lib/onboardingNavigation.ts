@@ -55,16 +55,25 @@ export async function resolvePostAuthDestination(
   userId: string,
   options: PostAuthOptions
 ): Promise<number | 'main'> {
-  const { hasPremium, resumePaywall, fromOnboarding } = options;
+  const { hasPremium, resumePaywall, fromOnboarding, existingAccount } = options;
 
-  const [profileComplete, hasPremiumAccess] = await Promise.all([
+  const [profileComplete, hasPremiumAccess, hasName] = await Promise.all([
     isOnboardingCompleteForUser(userId),
     resolveHasPremiumAccess(userId, hasPremium),
+    hasUserProfileName(userId),
   ]);
 
-  if (hasPremiumAccess) {
-    const hasName = await hasUserProfileName(userId);
-    return hasName ? 'main' : POST_PAY_PROFILE_STEP;
+  if (hasPremiumAccess && hasName) {
+    return 'main';
+  }
+
+  if (hasPremiumAccess && !hasName) {
+    return POST_PAY_PROFILE_STEP;
+  }
+
+  // Cuenta ya creada: nunca volver al cuestionario inicial.
+  if (existingAccount) {
+    return PAYWALL_START_STEP;
   }
 
   if (!profileComplete) {
@@ -74,7 +83,6 @@ export async function resolvePostAuthDestination(
     return FIRST_ONBOARDING_STEP;
   }
 
-  // Si el perfil está completo pero no tiene premium, siempre al paywall
   return PAYWALL_START_STEP;
 }
 
@@ -92,19 +100,22 @@ export function resolveAuthEntryForSession(
     return { route: 'Onboarding', step: PAYWALL_START_STEP };
   }
 
+  // Sesión restaurada con premium + nombre → AppNavigator muestra Home (showMain).
   if (hasPremiumAccess && profileNameStatus === 'complete') {
-    return { route: 'Onboarding', step: FIRST_ONBOARDING_STEP };
+    return { route: 'Onboarding', step: PAYWALL_START_STEP };
   }
 
   if (hasPremiumAccess && profileNameStatus !== 'complete') {
     return { route: 'Onboarding', step: POST_PAY_PROFILE_STEP };
   }
 
+  // Perfil ya existente (alarma/plan) pero sin premium → solo paywall, no cuestionario.
   if (profileStatus === 'complete') {
     return { route: 'Onboarding', step: PAYWALL_START_STEP };
   }
 
-  return { route: 'Onboarding', step: FIRST_ONBOARDING_STEP };
+  // Sesión a medias (p. ej. OAuth durante onboarding) → continuar paywall, no desde cero.
+  return { route: 'Onboarding', step: PAYWALL_START_STEP };
 }
 
 export { PAYWALL_START_STEP };

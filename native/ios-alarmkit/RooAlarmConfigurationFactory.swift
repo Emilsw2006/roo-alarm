@@ -57,10 +57,11 @@ enum RooAlarmConfigurationFactory {
       textColor: .white,
       systemImageName: "stop.circle.fill"
     )
+    // Solo title + stopButton. Pasar secondaryButtonBehavior sin secondaryButton
+    // hace que el compilador de EAS no case el init y falle con "missing stopButton".
     return AlarmPresentation.Alert(
       title: alertTitle,
-      stopButton: stop,
-      secondaryButtonBehavior: .countdown
+      stopButton: stop
     )
   }
 

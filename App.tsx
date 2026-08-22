@@ -22,6 +22,7 @@ import {
   Nunito_900Black,
 } from '@expo-google-fonts/nunito';
 import { configureAlarmNotifications, capturePendingAlarmLaunch, requestAlarmPermissions, refreshUserAlarmSchedules, getAlarmKitStatus, ensureAlarmKitAuthorized } from './lib/alarmScheduler';
+import { useMainAppReady } from './constants/MainAppReadyContext';
 
 export const navigationRef = createNavigationContainerRef<any>();
 
@@ -105,9 +106,10 @@ function AlarmPermissionsBridge() {
 
 function AlarmForegroundSyncBridge() {
   const { session } = useAuth();
+  const mainReady = useMainAppReady();
   useEffect(() => {
     const userId = session?.user?.id;
-    if (!userId) return;
+    if (!userId || !mainReady) return;
 
     const sync = () => {
       void refreshUserAlarmSchedules(userId).catch((err) => {
@@ -120,7 +122,7 @@ function AlarmForegroundSyncBridge() {
     });
 
     return () => subscription.remove();
-  }, [session?.user?.id]);
+  }, [session?.user?.id, mainReady]);
   return null;
 }
 
@@ -131,14 +133,16 @@ function OnboardingPersistenceBridge() {
 
 function GlobalAlarmBridge() {
   const { session } = useAuth();
-  const alarmFlowEnabled = !!session?.user;
+  const mainReady = useMainAppReady();
+  const alarmFlowEnabled = !!session?.user && mainReady;
   useGlobalAlarmTrigger(navigationRef, session?.user?.id ?? null, alarmFlowEnabled);
   return null;
 }
 
 function AlarmKitLaunchBridge() {
   const { session } = useAuth();
-  const alarmFlowEnabled = !!session?.user;
+  const mainReady = useMainAppReady();
+  const alarmFlowEnabled = !!session?.user && mainReady;
   useAlarmKitLaunchNavigation(
     navigationRef,
     Platform.OS === 'ios',

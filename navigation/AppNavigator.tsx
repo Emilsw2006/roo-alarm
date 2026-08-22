@@ -4,6 +4,7 @@ import { useColors } from '../constants/ThemeContext';
 import AppLoadingScreen from '../components/AppLoadingScreen';
 import { useAuthNavigationState } from '../hooks/useAuthNavigationState';
 import { usePendingAlarmRoute } from '../hooks/usePendingAlarmRoute';
+import { MainAppReadyProvider } from '../constants/MainAppReadyContext';
 
 import LoginScreen from '../screens/LoginScreen';
 import SignUpScreen from '../screens/SignUpScreen';
@@ -170,18 +171,28 @@ export default function AppNavigator() {
   const shouldShowMain = showMain || showMainForAlarm;
 
   if (loading && (!forceReady || !!session?.user?.id)) {
-    return <AppLoadingScreen backgroundColor={colors.bg} indicatorColor={colors.accSolid} />;
+    return (
+      <MainAppReadyProvider ready={false}>
+        <AppLoadingScreen backgroundColor={colors.bg} indicatorColor={colors.accSolid} />
+      </MainAppReadyProvider>
+    );
   }
 
   if (shouldShowMain) {
-    return <MainNavigator />;
+    return (
+      <MainAppReadyProvider ready>
+        <MainNavigator />
+      </MainAppReadyProvider>
+    );
   }
 
   return (
-    <AuthNavigator
-      key={`${session?.user?.id ?? 'guest'}-${authInitialRoute}-${authInitialStep}`}
-      initialRoute={authInitialRoute}
-      initialStep={authInitialStep}
-    />
+    <MainAppReadyProvider ready={false}>
+      <AuthNavigator
+        key={`${session?.user?.id ?? 'guest'}-${authInitialRoute}-${authInitialStep}`}
+        initialRoute={authInitialRoute}
+        initialStep={authInitialStep}
+      />
+    </MainAppReadyProvider>
   );
 }
