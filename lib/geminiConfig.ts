@@ -1,23 +1,9 @@
-const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
-
-// Clave de Google Cloud Console (Generative Language API).
-// Endpoint estándar de Gemini API — compatible con claves de GCP, no solo AI Studio.
-const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
-
-export function getGeminiApiKey() {
-  const key = process.env.EXPO_PUBLIC_GEMINI_API_KEY?.trim();
-  return key && key.length > 0 ? key : null;
-}
-
-export function getGeminiModel() {
-  const model = process.env.EXPO_PUBLIC_GEMINI_MODEL?.trim();
-  return model && model.length > 0 ? model : DEFAULT_MODEL;
-}
-
+/**
+ * La verificación de misiones con Gemini se hace en la Edge Function
+ * `verify-mission-photo`. La clave vive como secreto del proyecto Supabase:
+ * no hay ninguna credencial de Gemini en el cliente, porque todo lo que se
+ * compila en el bundle es extraíble del IPA.
+ */
 export function isGeminiMissionVerifyEnabled() {
-  return !!getGeminiApiKey();
-}
-
-export function getGeminiApiBase() {
-  return GEMINI_API_BASE;
+  return true;
 }

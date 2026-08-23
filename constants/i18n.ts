@@ -375,7 +375,7 @@ export const translations = {
     },
     settingsScreen: {
       account: 'Cuenta', general: 'General', snooze: 'Posponer', about: 'Acerca de', developer: 'Developer',
-      name: 'Nombre', email: 'Email', rescueTokens: 'Rescue Tokens', snoozeAlarms: 'Alarmas de repetición',
+      name: 'Nombre', email: 'Email', rescueTokens: 'Rescue Tokens', rescueTokensInfoTitle: '¿Qué son los Rescue Tokens?', rescueTokensInfoBody: 'Ganas 1 Rescue Token por cada 30 días de racha que mantengas. Si un día fallas al despertarte, podrás usar un token para salvar tu racha y no perderla.', snoozeAlarms: 'Alarmas de repetición',
       mySubscription: 'Mi suscripción',
       paywallTitle: 'Desbloquea Roo Alarm',
       paywallBody: 'Prueba gratis 3 días. Misiones de despertar, racha protegida y alarmas que de verdad te levantan.',
@@ -670,7 +670,7 @@ export const translations = {
     },
     settingsScreen: {
       account: 'Account', general: 'General', snooze: 'Snooze', about: 'About', developer: 'Developer',
-      name: 'Name', email: 'Email', rescueTokens: 'Rescue Tokens', snoozeAlarms: 'Snooze Alarms',
+      name: 'Name', email: 'Email', rescueTokens: 'Rescue Tokens', rescueTokensInfoTitle: 'What are Rescue Tokens?', rescueTokensInfoBody: 'You earn 1 Rescue Token for every 30 days of streak you maintain. If you fail to wake up one day, you can use a token to save your streak and not reset to 0.', snoozeAlarms: 'Snooze Alarms',
       mySubscription: 'My Subscription',
       paywallTitle: 'Unlock Roo Alarm',
       paywallBody: 'Try free for 3 days. Wake-up missions, streak protection, and alarms that actually get you up.',
@@ -965,7 +965,7 @@ export const translations = {
     },
     settingsScreen: {
       account: 'Konto', general: 'Allgemein', snooze: 'Schlummern', about: 'Info', developer: 'Entwickler',
-      name: 'Name', email: 'E-Mail', rescueTokens: 'Rescue Tokens', snoozeAlarms: 'Schlummer-Wecker',
+      name: 'Name', email: 'E-Mail', rescueTokens: 'Rescue Tokens', rescueTokensInfoTitle: 'Was sind Rescue Tokens?', rescueTokensInfoBody: 'Du verdienst 1 Rescue Token für alle 30 Tage Serie, die du aufrechterhältst. Wenn du an einem Tag nicht aufwachst, kannst du ein Token verwenden, um deine Serie zu retten.', snoozeAlarms: 'Schlummer-Wecker',
       mySubscription: 'Mein Abo',
       paywallTitle: 'Roo Alarm freischalten',
       paywallBody: '3 Tage gratis testen. Aufwach-Missionen, Serienschutz und Wecker, die dich wirklich wecken.',

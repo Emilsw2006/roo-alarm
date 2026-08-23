@@ -107,7 +107,14 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
     timeoutHandledRef.current = true;
     setRescueTokens(rescueTokens - 1);
     if (user) {
-      await supabase.from('user_settings').update({ rescue_tokens: rescueTokens - 1 }).eq('user_id', user.id);
+      // El decremento lo hace el servidor: atómico y con guarda de saldo.
+      const { data: remaining, error } = await supabase.rpc('spend_rescue_token');
+      if (error) {
+        console.log('spend_rescue_token failed', error);
+        setRescueTokens(rescueTokens);
+      } else if (typeof remaining === 'number') {
+        setRescueTokens(remaining);
+      }
     }
     setShowRescuePrompt(false);
     void finalizeAlarmSuccess(alarm, user?.id);
@@ -134,6 +141,17 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
     }
 
     if (!isDaily) {
+      if (user) {
+        const { data } = await supabase
+          .from('user_settings')
+          .select('mission_mode, enabled_missions')
+          .eq('user_id', user.id)
+          .single();
+        if (data?.mission_mode === 'roulette') {
+          startRoulettePool(Array.isArray(data.enabled_missions) ? data.enabled_missions : null);
+          return;
+        }
+      }
       setMissionMode('personalized');
       setMission(getMission(alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
       return;
@@ -144,11 +162,19 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
       return;
     }
 
-    const { data } = await supabase
-      .from('user_settings')
-      .select('mission_mode, enabled_missions, personalized_mission, default_mission')
-      .eq('user_id', user.id)
-      .single();
+    // Si Supabase no responde no podemos dejar la misión sin resolver: el usuario
+    // ya está despierto y el temporizador corre. Caemos al modo por defecto.
+    let data: { mission_mode?: string; enabled_missions?: unknown; personalized_mission?: string; default_mission?: string } | null = null;
+    try {
+      const result = await supabase
+        .from('user_settings')
+        .select('mission_mode, enabled_missions, personalized_mission, default_mission')
+        .eq('user_id', user.id)
+        .single();
+      data = result.data;
+    } catch (error) {
+      console.log('resolveMission settings error', error);
+    }
 
     if (data?.mission_mode === 'roulette') {
       startRoulettePool(Array.isArray(data.enabled_missions) ? data.enabled_missions : null);

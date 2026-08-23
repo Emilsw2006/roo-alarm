@@ -1,9 +1,12 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { useColors } from '../constants/ThemeContext';
 import { useLanguage } from '../constants/LanguageContext';
-import Icon from './Icon';
+import { FONT_FAMILY } from '../constants/theme';
 import SquishyButton from './SquishyButton';
+
+const ROO_IMAGE = require('../assets/entrevistador.png');
+const BRAND_RED = '#E64235';
 
 interface MissionRescuePromptProps {
   visible: boolean;
@@ -33,15 +36,15 @@ export default function MissionRescuePrompt({
     <View style={[StyleSheet.absoluteFill, styles.overlay]}>
       <View style={[styles.card, { backgroundColor: colors.surface }]}>
         <View style={styles.iconWrap}>
-          <Icon name="sparkle" size={32} color="#FFB000" variant="solid" />
+          <Image source={ROO_IMAGE} style={styles.rooImage} />
         </View>
         <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
         <Text style={[styles.body, { color: colors.textDim }]}>{body}</Text>
 
         <View style={styles.actions}>
           <SquishyButton
-            color="#FFB000"
-            shadowColor="rgba(255, 176, 0, 0.3)"
+            color={BRAND_RED}
+            shadowColor="rgba(179, 45, 35, 0.42)"
             onPress={onUseToken}
             contentStyle={{ height: 56, alignItems: 'center', justifyContent: 'center', paddingVertical: 0 }}
           >
@@ -72,22 +75,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   iconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(255, 176, 0, 0.1)',
+    width: 96,
+    height: 96,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
+  },
+  rooImage: {
+    width: 96,
+    height: 96,
+    resizeMode: 'contain',
   },
   title: {
-    fontSize: 24,
-    fontWeight: '800',
+    fontSize: 26,
+    fontFamily: FONT_FAMILY.black,
+    letterSpacing: -0.5,
     marginBottom: 12,
     textAlign: 'center',
   },
   body: {
     fontSize: 16,
+    fontFamily: FONT_FAMILY.medium,
     textAlign: 'center',
     marginBottom: 32,
     lineHeight: 24,
@@ -98,8 +106,8 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: {
     fontSize: 17,
-    fontWeight: '700',
-    color: '#000',
+    fontFamily: FONT_FAMILY.bold,
+    color: '#FFFFFF',
   },
   secondaryBtn: {
     height: 56,
@@ -108,6 +116,6 @@ const styles = StyleSheet.create({
   },
   secondaryBtnText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontFamily: FONT_FAMILY.bold,
   },
 });

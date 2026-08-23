@@ -35,10 +35,20 @@ const AuthContext = createContext<AuthContextType>({
   resetPassword: async () => ({ error: null }),
 });
 
+const translateAuthError = (msg: string) => {
+  if (msg.toLowerCase().includes('already registered')) {
+    return 'Este correo ya está registrado con otro método (ej. Apple o Google). Por favor, usa el método original.';
+  }
+  return msg;
+};
+
 const setSessionFromOAuthUrl = async (url: string) => {
   // El callback puede llegar con los datos en query (?a=b) o en el hash (#a=b).
-  const queryString = url.includes('#') ? url.slice(url.indexOf('#') + 1) : url.split('?')[1] ?? '';
-  const params = new URLSearchParams(queryString);
+  // A veces Supabase añade ambos (?code=123#), así que extraemos las dos partes.
+  const queryPart = url.includes('?') ? url.split('?')[1].split('#')[0] : '';
+  const hashPart = url.includes('#') ? url.split('#')[1] : '';
+  
+  const params = new URLSearchParams(queryPart + '&' + hashPart);
 
   const errorDescription = params.get('error_description') || params.get('error');
   if (errorDescription) {
@@ -49,7 +59,7 @@ const setSessionFromOAuthUrl = async (url: string) => {
   const code = params.get('code');
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) return { error: error.message };
+    if (error) return { error: translateAuthError(error.message) };
     return { error: null };
   }
 
@@ -61,11 +71,11 @@ const setSessionFromOAuthUrl = async (url: string) => {
       access_token: accessToken,
       refresh_token: refreshToken,
     });
-    if (error) return { error: error.message };
+    if (error) return { error: translateAuthError(error.message) };
     return { error: null };
   }
 
-  return { error: 'No se pudo completar el inicio de sesión.' };
+  return { error: `No se pudo completar el inicio de sesión. (URL recibida sin tokens: ${url})` };
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -149,17 +159,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         skipBrowserRedirect: true,
       },
     });
-    if (error) return { error: error.message };
+    if (error) return { error: translateAuthError(error.message) };
     if (!data?.url) return { error: 'No se pudo abrir el inicio de sesión.' };
 
-    const result = await WebBrowser.openAuthSessionAsync(data.url, AUTH_REDIRECT_URL);
+    let result;
+    try {
+      result = await WebBrowser.openAuthSessionAsync(data.url, AUTH_REDIRECT_URL);
+    } catch (err: any) {
+      return { error: `Error abriendo navegador: ${err.message}` };
+    }
+
     if (result.type === 'success' && result.url) {
       return setSessionFromOAuthUrl(result.url);
     }
     if (result.type === 'cancel' || result.type === 'dismiss') {
       return { error: null };
     }
-    return { error: 'No se pudo completar el inicio de sesión.' };
+    return { error: `No se pudo completar el inicio de sesión (Motivo: ${result.type}).` };
   }, []);
 
   const signInWithGoogle = () => signInWithOAuthProvider('google');
@@ -192,7 +208,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         provider: 'apple',
         token: credential.identityToken,
       });
-      if (error) return { error: error.message };
+      if (error) return { error: translateAuthError(error.message) };
 
       // Apple solo envía el nombre la primera vez; lo guardamos en el perfil.
       const fullName = credential.fullName;
@@ -221,7 +237,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetPassword = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    // Sin redirectTo el enlace del correo abre la Site URL por defecto y el usuario
+    // se queda fuera de la app, sin forma de volver a la pantalla de cambio.
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: 'com.roo.alarm://reset-password',
+    });
     if (error) return { error: error.message };
     return { error: null };
   };

@@ -57,6 +57,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!user) {
       loadedUserId.current = null;
+      setStreakState(0);
+      setLongestStreak(0);
+      setRescueTokens(0);
       setInitialDataLoading(false);
       return;
     }
@@ -158,6 +161,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       } else {
         setStreakState(lastStreak);
       }
+    } else {
+      setStreakState(0);
     }
   };
 
@@ -254,7 +259,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         settingsChanged = true;
       }
       
-      if (s > 0 && s % 30 === 0) {
+      if (s > 0 && (s % 30 === 0 || s === 3)) {
         newTokens += 1;
         settingsChanged = true;
       }
@@ -266,9 +271,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       }
     }
     
-    setWeeklyHistory(prev => {
-      const next = [...prev];
-      next[currentDayIndex] = true;
+    // Sync with Widget
+    import('../lib/widgetSync').then(m => m.syncWidgetStreak(s)).catch(() => {});
+    
+    setWeeklyHistory(() => {
+      if (s <= 0) return Array(7).fill(false);
+      
+      const next = Array(7).fill(false);
+      
+      // Para hacer previews perfectas: si hay racha, llenamos siempre todos los días
+      // de esta semana hasta el día actual, independientemente de la racha exacta.
+      for (let i = 0; i <= currentDayIndex; i++) {
+        next[i] = true;
+      }
+      
       return next;
     });
   };

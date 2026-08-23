@@ -1,6 +1,6 @@
 import { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
-import { scheduleAlarm, requestAlarmPermissions } from './alarmScheduler';
+import { requestAlarmPermissions } from './alarmScheduler';
 import { Alarm } from '../constants/data';
 import {
   DEFAULT_ENABLED_MISSIONS,
@@ -126,16 +126,6 @@ export const ensureInitialDailyAlarm = async (
   userId: string,
   data: OnboardingData
 ): Promise<Alarm | null> => {
-  const { data: existing, error: listError } = await supabase
-    .from('alarms')
-    .select('id')
-    .eq('user_id', userId)
-    .is('specific_date', null)
-    .limit(1);
-
-  if (listError) throw listError;
-  if (existing && existing.length > 0) return null;
-
   const targetTime = data.targetWakeTime;
   if (!targetTime) return null;
 
@@ -150,6 +140,35 @@ export const ensureInitialDailyAlarm = async (
       : selectedMissions[0] || DEFAULT_PERSONALIZED_MISSION;
   const { time, ampm } = targetWakeTimeToClock(targetTime);
 
+  const { data: existingRows, error: listError } = await supabase
+    .from('alarms')
+    .select('*')
+    .eq('user_id', userId)
+    .is('specific_date', null)
+    .order('id', { ascending: false })
+    .limit(1);
+
+  if (listError) throw listError;
+
+  if (existingRows && existingRows.length > 0) {
+    const row = existingRows[0];
+    const { data: updated, error: updateError } = await supabase
+      .from('alarms')
+      .update({
+        time,
+        ampm,
+        mission,
+        enabled: true,
+        mission_mode: missionMode,
+      })
+      .eq('id', row.id)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+    return updated ? mapAlarmFromRow(updated) : mapAlarmFromRow(row);
+  }
+
   const { data: inserted, error } = await supabase
     .from('alarms')
     .insert({
@@ -159,6 +178,7 @@ export const ensureInitialDailyAlarm = async (
       mission,
       label: 'Wake up',
       enabled: true,
+      mission_mode: missionMode,
     })
     .select()
     .single();
@@ -166,11 +186,7 @@ export const ensureInitialDailyAlarm = async (
   if (error) throw error;
   if (!inserted) return null;
 
-  const alarm = mapAlarmFromRow(inserted);
-  if (alarm.on) {
-    await scheduleAlarm(alarm, { protectedDays: data.protectedDays });
-  }
-  return alarm;
+  return mapAlarmFromRow(inserted);
 };
 
 export const applyOnboardingSetup = async (

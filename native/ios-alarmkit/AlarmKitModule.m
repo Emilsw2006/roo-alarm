@@ -53,4 +53,14 @@ RCT_EXTERN_METHOD(triggerSimulationNow:(NSString *)title
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(syncWidgetStreak:(nonnull NSNumber *)streak
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(syncWidgetNextAlarm:(NSString *)nextAlarmTime
+                  nextAlarmLabel:(NSString *)nextAlarmLabel
+                  isDaily:(nonnull NSNumber *)isDaily
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 @end

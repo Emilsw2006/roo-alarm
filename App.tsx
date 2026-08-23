@@ -6,7 +6,7 @@ import { AuthProvider, useAuth } from './constants/AuthContext';
 import { OnboardingProvider } from './constants/OnboardingContext';
 import { SubscriptionProvider } from './constants/SubscriptionContext';
 import AppNavigator from './navigation/AppNavigator';
-import { LogBox, Platform, AppState } from 'react-native';
+import { LogBox, Platform, AppState, Alert, Linking } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppLoadingScreen from './components/AppLoadingScreen';
 import { useAlarmKitLaunchNavigation } from './hooks/useAlarmKitLaunchNavigation';
@@ -21,7 +21,8 @@ import {
   Nunito_800ExtraBold,
   Nunito_900Black,
 } from '@expo-google-fonts/nunito';
-import { configureAlarmNotifications, capturePendingAlarmLaunch, requestAlarmPermissions, refreshUserAlarmSchedules } from './lib/alarmScheduler';
+import { configureAlarmNotifications, capturePendingAlarmLaunch, requestAlarmPermissions, refreshUserAlarmSchedules, getAlarmKitStatus, ensureAlarmKitAuthorized } from './lib/alarmScheduler';
+import { useMainAppReady } from './constants/MainAppReadyContext';
 
 export const navigationRef = createNavigationContainerRef<any>();
 
@@ -56,16 +57,59 @@ function AlarmPermissionsBridge() {
   const { session } = useAuth();
   useEffect(() => {
     if (!session?.user) return;
-    requestAlarmPermissions().catch(() => {});
+    if (Platform.OS !== 'ios') {
+      requestAlarmPermissions().catch(() => {});
+      return;
+    }
+
+    const checkAndPrompt = async () => {
+      // First ensure base notification permissions
+      await requestAlarmPermissions().catch(() => {});
+
+      // Then check AlarmKit specifically
+      const status = await getAlarmKitStatus().catch(() => null);
+      if (!status?.available) return; // iOS < 26 or Simulator, nothing to do
+
+      if (status.authorized) return; // Already granted ✅
+
+      if (status.authorization === 'denied') {
+        // User previously denied — offer to go to Settings
+        Alert.alert(
+          '🔔 Activa las Alarmas',
+          'Roo Alarm necesita permiso de Alarmas para que tu alarma suene aunque el teléfono esté en silencio. Ve a Ajustes para activarlo.',
+          [
+            { text: 'Ahora no', style: 'cancel' },
+            { text: 'Abrir Ajustes', onPress: () => Linking.openSettings() },
+          ]
+        );
+        return;
+      }
+
+      // notDetermined — ask directly with system dialog
+      const result = await ensureAlarmKitAuthorized().catch(() => 'unsupported' as const);
+      if (result === 'denied') {
+        Alert.alert(
+          '🔔 Permiso denegado',
+          'Sin el permiso de Alarmas, Roo Alarm no podrá despertarte. Puedes activarlo en Ajustes → Roo Alarm → Alarmas.',
+          [
+            { text: 'Ahora no', style: 'cancel' },
+            { text: 'Abrir Ajustes', onPress: () => Linking.openSettings() },
+          ]
+        );
+      }
+    };
+
+    void checkAndPrompt();
   }, [session?.user?.id]);
   return null;
 }
 
 function AlarmForegroundSyncBridge() {
   const { session } = useAuth();
+  const mainReady = useMainAppReady();
   useEffect(() => {
     const userId = session?.user?.id;
-    if (!userId) return;
+    if (!userId || !mainReady) return;
 
     const sync = () => {
       void refreshUserAlarmSchedules(userId).catch((err) => {
@@ -78,7 +122,7 @@ function AlarmForegroundSyncBridge() {
     });
 
     return () => subscription.remove();
-  }, [session?.user?.id]);
+  }, [session?.user?.id, mainReady]);
   return null;
 }
 
@@ -89,14 +133,16 @@ function OnboardingPersistenceBridge() {
 
 function GlobalAlarmBridge() {
   const { session } = useAuth();
-  const alarmFlowEnabled = !!session?.user;
+  const mainReady = useMainAppReady();
+  const alarmFlowEnabled = !!session?.user && mainReady;
   useGlobalAlarmTrigger(navigationRef, session?.user?.id ?? null, alarmFlowEnabled);
   return null;
 }
 
 function AlarmKitLaunchBridge() {
   const { session } = useAuth();
-  const alarmFlowEnabled = !!session?.user;
+  const mainReady = useMainAppReady();
+  const alarmFlowEnabled = !!session?.user && mainReady;
   useAlarmKitLaunchNavigation(
     navigationRef,
     Platform.OS === 'ios',

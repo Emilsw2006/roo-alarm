@@ -487,9 +487,11 @@ function PaywallBottomPanel({
 function PaywallScreenContainer({
   children,
   colors,
+  onRestartOnboarding,
 }: {
   children: React.ReactNode;
   colors: ReturnType<typeof useColors>['colors'];
+  onRestartOnboarding?: () => void;
 }) {
   const insets = useSafeAreaInsets();
 
@@ -503,6 +505,7 @@ function PaywallScreenContainer({
         },
       ]}
     >
+
       {children}
     </View>
   );
@@ -1321,29 +1324,6 @@ export const Step13_WakeFeeling = ({ onNext }: { onNext: () => void }) => {
   );
 };
 
-// Pantalla 14: Modo de misión
-export const Step14_MissionMode = ({ onNext }: { onNext: () => void }) => {
-  const { updateData } = useOnboarding();
-  const { t, ta } = useLanguage();
-  const options = ta('onboarding.missionModeOptions');
-  const rouletteLabel = options[1] || 'Roo Roulette';
-  const [selected, setSelected] = useState<string | null>(rouletteLabel);
-
-  return (
-    <QuestionLayout 
-      question={t('onboarding.qMissionMode')}
-      rooAction="con ruleta"
-      options={options}
-      selectedOption={selected}
-      onSelectOption={setSelected}
-      onNext={() => { 
-        updateData({ missionType: selected === rouletteLabel ? 'roulette' : 'personalized' }); 
-        onNext(); 
-      }}
-    />
-  );
-};
-
 // Pantalla 15: Configurar misiones
 export const Step15_MissionConfig = ({ onNext }: { onNext: () => void }) => {
   const { colors } = useColors();
@@ -1527,6 +1507,8 @@ export const Step18b_GoalSummary = ({ onNext }: { onNext: () => void }) => {
     protectedDaysPerWeek: daysCount,
     wakeUpDuration: data.wakeUpDuration,
     snoozeHabit: data.snoozeHabit,
+    usualWakeTime: data.usualWakeTime,
+    targetWakeTime: data.targetWakeTime,
   });
   const accent = colors.accSolid;
 
@@ -2315,16 +2297,18 @@ export const Step30_TrialIntro = ({
   onNext,
   onSignIn,
   onSignOutSession,
+  onRestartOnboarding,
 }: {
   onNext: () => void;
   onSignIn?: () => void;
   onSignOutSession?: () => void;
+  onRestartOnboarding?: () => void;
 }) => {
   const { colors } = useColors();
   const { t } = useLanguage();
 
   return (
-    <PaywallScreenContainer colors={colors}>
+    <PaywallScreenContainer colors={colors} onRestartOnboarding={onRestartOnboarding}>
       <View style={{ flexShrink: 0 }}>
         <PaywallTitleTwoLines
           line1={t('onboarding.tryRooFreeLine1')}
@@ -2366,12 +2350,12 @@ export const Step30_TrialIntro = ({
   );
 };
 
-export const Step31_TrialReminder = ({ onNext, onSignIn }: { onNext: () => void; onSignIn?: () => void }) => {
+export const Step31_TrialReminder = ({ onNext, onSignIn, onRestartOnboarding }: { onNext: () => void; onSignIn?: () => void; onRestartOnboarding?: () => void }) => {
   const { colors } = useColors();
   const { t } = useLanguage();
 
   return (
-    <PaywallScreenContainer colors={colors}>
+    <PaywallScreenContainer colors={colors} onRestartOnboarding={onRestartOnboarding}>
       <View style={{ flexShrink: 0, alignItems: 'center', paddingTop: 4, paddingHorizontal: 8 }}>
         <Text style={{ color: colors.text, fontSize: 26, lineHeight: 32, fontWeight: '600', textAlign: 'center', maxWidth: 335 }}>
           {t('onboarding.trialReminderTitle')}
@@ -2406,7 +2390,7 @@ export const Step31_TrialReminder = ({ onNext, onSignIn }: { onNext: () => void;
   );
 };
 
-export const Step32_FinalPaywall = ({ onNext, onSignIn, onDismiss }: { onNext: () => void; onSignIn?: () => void; onDismiss?: () => void }) => {
+export const Step32_FinalPaywall = ({ onNext, onSignIn, onDismiss, onRestartOnboarding }: { onNext: () => void; onSignIn?: () => void; onDismiss?: () => void; onRestartOnboarding?: () => void }) => {
   const { colors } = useColors();
   const { session } = useAuth();
   const { t } = useLanguage();
@@ -2470,7 +2454,7 @@ export const Step32_FinalPaywall = ({ onNext, onSignIn, onDismiss }: { onNext: (
   };
 
   return (
-    <PaywallScreenContainer colors={colors}>
+    <PaywallScreenContainer colors={colors} onRestartOnboarding={onRestartOnboarding}>
       {onDismiss ? (
         <TouchableOpacity
           onPress={onDismiss}
@@ -2596,7 +2580,7 @@ export const Step32_FinalPaywall = ({ onNext, onSignIn, onDismiss }: { onNext: (
 export const ONBOARDING_STEPS = [
   Step1_Loading, Step2_Value, Step3_Thought, Step4_BedReason, Step5_UsualTime,
   Step6_SnoozeFreq, Step7_AlarmCount, Step8_Biology, Step9_Chart, Step10_OneAlarm, Step11_Temple,
-  Step12_PhysicalAction, Step13_WakeFeeling, Step14_MissionMode, Step15_MissionConfig, Step16_AwakeTime,
+  Step12_PhysicalAction, Step13_WakeFeeling, Step15_MissionConfig, Step16_AwakeTime,
   Step17_TargetTime, Step18_ProtectedDays, Step18b_GoalSummary, Step20_ThePact,
   Step28b_MorningPlan, Step27_Auth, Step23_PaywallChart,
   Step30_TrialIntro, Step31_TrialReminder, Step32_FinalPaywall,

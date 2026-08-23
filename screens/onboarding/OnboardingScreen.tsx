@@ -22,7 +22,6 @@ export default function OnboardingScreen({ navigation, route }: { navigation: an
   const { resetData } = useOnboarding();
   const initialStep = Math.min(route?.params?.initialStep ?? FIRST_ONBOARDING_STEP, ONBOARDING_STEPS.length - 1);
   const [step, setStep] = useState(initialStep);
-  const [devScreenshotBusy, setDevScreenshotBusy] = useState(false);
 
   useEffect(() => {
     const nextStep = Math.min(route?.params?.initialStep ?? FIRST_ONBOARDING_STEP, ONBOARDING_STEPS.length - 1);
@@ -72,15 +71,6 @@ export default function OnboardingScreen({ navigation, route }: { navigation: an
     requestAuthNavigationRefresh();
   };
 
-  const handleDevScreenshotHome = async () => {
-    if (!__DEV__ || devScreenshotBusy) return;
-    setDevScreenshotBusy(true);
-    const result = await grantDevScreenshotAccess();
-    setDevScreenshotBusy(false);
-    if (!result.success && result.error) {
-      Alert.alert('DEV', result.error);
-    }
-  };
 
   useEffect(() => {
     if (!isPaywallStep || hasPremiumAccess || isFinalPaywallStep) return;
@@ -193,25 +183,16 @@ export default function OnboardingScreen({ navigation, route }: { navigation: an
           onSignIn={isPaywallStep ? goToLoginForPaywall : goToLogin}
           onDismiss={isFinalPaywallStep && !hasPremiumAccess ? handlePaywallDismiss : undefined}
           onSignOutSession={step === PAYWALL_START_STEP && session ? handleSignOutSession : undefined}
+          onRestartOnboarding={isPaywallStep ? () => {
+            resetData();
+            setStep(FIRST_ONBOARDING_STEP);
+          } : undefined}
         />
       </Animated.View>
 
       {step === initialStep && initialStep <= FIRST_ONBOARDING_STEP && <LanguageFlagButton />}
 
-      {__DEV__ && isPaywallStep && !hasPremiumAccess ? (
-        <TouchableOpacity
-          onPress={handleDevScreenshotHome}
-          activeOpacity={0.8}
-          style={[styles.devScreenshotBtn, { backgroundColor: colors.text }]}
-          disabled={devScreenshotBusy}
-        >
-          {devScreenshotBusy ? (
-            <ActivityIndicator color={colors.bg} size="small" />
-          ) : (
-            <Text style={[styles.devScreenshotText, { color: colors.bg }]}>DEV → Home</Text>
-          )}
-        </TouchableOpacity>
-      ) : null}
+
     </SafeAreaView>
   );
 }
@@ -247,23 +228,5 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-  },
-  devScreenshotBtn: {
-    position: 'absolute',
-    top: 54,
-    left: 16,
-    zIndex: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    minWidth: 108,
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: 0.88,
-  },
-  devScreenshotText: {
-    fontSize: 12,
-    fontFamily: FONT_FAMILY.bold,
-    letterSpacing: 0.2,
   },
 });

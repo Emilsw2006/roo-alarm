@@ -6,6 +6,7 @@ import { RouteProp, useRoute } from '@react-navigation/native';
 import { useAuth } from '../constants/AuthContext';
 import { useSubscription } from '../constants/SubscriptionContext';
 import { useLanguage } from '../constants/LanguageContext';
+import { useOnboarding } from '../constants/OnboardingContext';
 import { isInvalidLoginError } from '../lib/onboardingStatus';
 import { requestAuthNavigationRefresh } from '../lib/authNavigationRefresh';
 import { resolvePostAuthDestination } from '../lib/onboardingNavigation';
@@ -28,6 +29,7 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
   const { signIn, signInWithGoogle, signInWithApple } = useAuth();
   const { hasPremiumAccess, refreshCustomerInfo } = useSubscription();
   const { t } = useLanguage();
+  const { resetData } = useOnboarding();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -236,6 +238,85 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
             </Animated.View>
           </View>
         </ScrollView>
+        
+        <TouchableOpacity 
+          onPress={async () => {
+            setError(null);
+            setLoading(true);
+            const email = 'demo@rooalarm.com';
+            const password = 'demopassword123';
+            const name = 'Demo User';
+
+            try {
+              // Try signing in
+              let { error } = await supabase.auth.signInWithPassword({ email, password });
+              if (error && error.message.toLowerCase().includes('invalid login credentials')) {
+                // Register it if not found
+                const { error: signUpError } = await supabase.auth.signUp({
+                  email,
+                  password,
+                  options: { data: { name } }
+                });
+                if (!signUpError) {
+                  const res = await supabase.auth.signInWithPassword({ email, password });
+                  error = res.error;
+                } else {
+                  error = signUpError;
+                }
+              }
+
+              if (error) {
+                setError(error.message);
+                setLoading(false);
+                return;
+              }
+
+              const { data } = await supabase.auth.getUser();
+              if (data.user?.id) {
+                // Pre-configure user settings to mark onboarding complete and set premium active in database
+                await supabase.from('user_settings').upsert({
+                  user_id: data.user.id,
+                  name: 'Demo User',
+                  target_wake_time: new Date().toISOString(),
+                  mission_mode: 'personalized',
+                  enabled_missions: [],
+                  is_subscribed: true,
+                  subscription_plan: 'annual',
+                  subscription_status: 'active',
+                  subscribed_at: new Date().toISOString(),
+                }, { onConflict: 'user_id' });
+
+                // Mark premium flag locally to bypass paywall
+                const premiumFlagKey = `rooalarm.premium.${data.user.id}`;
+                const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                await AsyncStorage.setItem(premiumFlagKey, '1');
+
+                await finishAuth(data.user.id);
+              }
+            } catch (err: any) {
+              setError(err.message || 'Error de bypass');
+              setLoading(false);
+            }
+          }}
+          style={[styles.bypassBtn, { bottom: Math.max(insets.bottom, 16) + 8 }]}
+          activeOpacity={0.75}
+        >
+          <Icon name="sparkle" size={20} color="#A09E9B" stroke={2.5} />
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          onPress={() => {
+            resetData();
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'Onboarding', params: { initialStep: 1 } }],
+            });
+          }} 
+          style={[styles.restartBtn, { bottom: Math.max(insets.bottom, 16) + 8 }]} 
+          activeOpacity={0.75}
+        >
+          <Icon name="repeat" size={20} color="#A09E9B" stroke={2.5} />
+        </TouchableOpacity>
       </KeyboardAvoidingView>
     </View>
   );
@@ -246,6 +327,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flexGrow: 1, paddingHorizontal: SIZES.pad },
   backBtn: { marginTop: 16, width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
+  restartBtn: { position: 'absolute', right: SIZES.pad, width: 42, height: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5F4F2', borderRadius: 21 },
+  bypassBtn: { position: 'absolute', left: SIZES.pad, width: 42, height: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5F4F2', borderRadius: 21 },
   progressPill: { position: 'absolute', top: 36, left: 82, right: 20, height: 6, borderRadius: 999, backgroundColor: '#050505' },
   hero: { paddingTop: 46, paddingBottom: 200 },
   heroCompact: { paddingBottom: 28 },

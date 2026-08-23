@@ -28,13 +28,26 @@ export function getMonthlyHoursSaved(input: {
   protectedDaysPerWeek: number;
   wakeUpDuration?: string;
   snoozeHabit?: string;
+  usualWakeTime?: Date;
+  targetWakeTime?: Date;
 }): number {
   const days = Math.max(1, Math.min(7, input.protectedDaysPerWeek));
   const awakeIndex = resolveOptionIndex(input.wakeUpDuration, 'awakeTimeOptions', 2);
   const snoozeIndex = resolveOptionIndex(input.snoozeHabit, 'snoozeOptions', 1);
 
+  let awakeMinutesSaved = 0;
+  if (input.usualWakeTime && input.targetWakeTime) {
+    const usualMinutes = input.usualWakeTime.getHours() * 60 + input.usualWakeTime.getMinutes();
+    const targetMinutes = input.targetWakeTime.getHours() * 60 + input.targetWakeTime.getMinutes();
+    
+    if (usualMinutes > targetMinutes) {
+      awakeMinutesSaved = usualMinutes - targetMinutes;
+    }
+  }
+
+  // Si no se gana tiempo adelantando el reloj, aún sumamos los bonos de despertar más rápido y sin snooze
   const minutesPerMorning =
-    AWAKE_MINUTES_SAVED[awakeIndex] + SNOOZE_BONUS_MINUTES[snoozeIndex];
+    awakeMinutesSaved + AWAKE_MINUTES_SAVED[awakeIndex] + SNOOZE_BONUS_MINUTES[snoozeIndex];
 
   const totalMinutes = days * WEEKS_PER_MONTH * minutesPerMorning;
   return Math.max(1, Math.round(totalMinutes / 60));

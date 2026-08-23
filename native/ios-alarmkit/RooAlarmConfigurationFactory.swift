@@ -29,23 +29,17 @@ enum RooAlarmConfigurationFactory {
     )
   }
 
-  /// Sin postAlert en la alarma programada: el re-disparo lo gestiona RooAlarmSlideDismissIntent
-  /// (evita que iOS muestre solo una notificación/countdown al deslizar).
-  static var scheduledAlarmCountdown: Alarm.CountdownDuration {
-    Alarm.CountdownDuration(preAlert: nil, postAlert: nil)
+  /// Alarma puramente programada: sin countdown. Apple's `.alarm(schedule:)` factory omite
+  /// countdownDuration por completo, así que pasamos `nil` (no un CountdownDuration vacío, que
+  /// AlarmKit puede interpretar como countdown degenerado y no llegar a sonar en la fecha fija).
+  /// El re-disparo al deslizar lo gestiona RooAlarmSlideDismissIntent.
+  static var scheduledAlarmCountdown: Alarm.CountdownDuration? {
+    nil
   }
 
   /// Full UI: Desbloquear (rojo/blanco vía tintColor) + retrigger al cerrar/deslizar.
   static func makeAlertPresentation(title: String) -> AlarmPresentation.Alert {
     let alertTitle = LocalizedStringResource(stringLiteral: title.isEmpty ? "Roo Alarm" : title)
-    if #available(iOS 26.1, *) {
-      return AlarmPresentation.Alert(
-        title: alertTitle,
-        stopButton: slideStopButton,
-        secondaryButton: unlockButton,
-        secondaryButtonBehavior: .custom
-      )
-    }
     return AlarmPresentation.Alert(
       title: alertTitle,
       stopButton: slideStopButton,
@@ -55,19 +49,19 @@ enum RooAlarmConfigurationFactory {
   }
 
   /// Minimal presentation used when the full config cannot be scheduled.
+  /// Always pass `stopButton`: current AlarmKit SDKs require it (title-only init fails to compile).
   static func makeSimpleAlertPresentation(title: String) -> AlarmPresentation.Alert {
     let alertTitle = LocalizedStringResource(stringLiteral: title.isEmpty ? "Roo Alarm" : title)
-    if #available(iOS 26.1, *) {
-      return AlarmPresentation.Alert(title: alertTitle)
-    }
+    let stop = AlarmButton(
+      text: "Detener",
+      textColor: .white,
+      systemImageName: "stop.circle.fill"
+    )
+    // Solo title + stopButton. Pasar secondaryButtonBehavior sin secondaryButton
+    // hace que el compilador de EAS no case el init y falle con "missing stopButton".
     return AlarmPresentation.Alert(
       title: alertTitle,
-      stopButton: AlarmButton(
-        text: "Detener",
-        textColor: .white,
-        systemImageName: "stop.circle.fill"
-      ),
-      secondaryButtonBehavior: .countdown
+      stopButton: stop
     )
   }
 

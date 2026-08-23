@@ -109,13 +109,20 @@ export const isOtherAlarmScheduledForDay = (alarm: Alarm, day: Date) => {
 };
 
 const getClockMatch = (alarm: Alarm, now: Date) => {
-  const currentHour = now.getHours();
-  const currentMin = now.getMinutes();
-  const currentAmPm = currentHour >= 12 ? 'PM' : 'AM';
-  let displayHour = currentHour % 12;
-  if (displayHour === 0) displayHour = 12;
   const [aH, aM] = alarm.time.split(':').map(Number);
-  return aH === displayHour && aM === currentMin && alarm.ampm === currentAmPm;
+  
+  const fireTimeToday = new Date(now);
+  let hour24 = aH;
+  if (alarm.ampm === 'PM' && hour24 < 12) hour24 += 12;
+  if (alarm.ampm === 'AM' && hour24 === 12) hour24 = 0;
+  
+  fireTimeToday.setHours(hour24, aM, 0, 0);
+
+  const diffMs = now.getTime() - fireTimeToday.getTime();
+  const diffMinutes = diffMs / 60000;
+
+  // Trigger if it's exactly the time, or up to 60 minutes late (to handle delayed app opens)
+  return diffMinutes >= 0 && diffMinutes <= 60;
 };
 
 export const shouldFireAlarmNow = (
@@ -132,7 +139,10 @@ export const shouldFireAlarmNow = (
 
   const todayStr = now.toISOString().split('T')[0];
   if (alarm.lastCompletedDate === todayStr) return false;
-  if (alarm.lastTriggeredDate === todayStr) return false;
+
+  // Si ya se ha lanzado hoy pero no se ha completado, no bloqueamos el flujo.
+  // Queremos que el usuario complete la misión aunque haya cerrado la app antes.
+  // if (alarm.lastTriggeredDate === todayStr) return false;
 
   return getClockMatch(alarm, now);
 };
@@ -178,7 +188,10 @@ export const navigateToAlarmMission = (
 ) => {
   if (!navigationRef.isReady()) return false;
   const routeName = navigationRef.getCurrentRoute()?.name;
-  if (routeName === 'AlarmMission' || routeName === 'Camera') return false;
+  if (routeName === 'AlarmMission' || routeName === 'Camera') {
+    console.log('[RooAlarm] navigateToAlarmMission: already on', routeName, '- skipping navigation');
+    return false;
+  }
 
   if (params.fromAlarmKit) {
     navigationRef.dispatch(

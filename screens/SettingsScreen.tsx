@@ -31,6 +31,7 @@ import {
   getAlarmKitStatus,
   getAlarmRegistry,
   repairAlarmSchedules,
+  ensureAlarmKitAuthorized,
 } from '../lib/alarmScheduler';
 import * as Notifications from 'expo-notifications';
 import { getAlarmCapability } from '../lib/alarmCapability';
@@ -236,6 +237,35 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
 
   const [activePopup, setActivePopup] = useState<'name'|'language'|'streak'|null>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [alarmKitAuth, setAlarmKitAuth] = useState<'authorized'|'denied'|'notDetermined'|'unsupported'|null>(null);
+
+  const loadAlarmKitStatus = async () => {
+    const status = await getAlarmKitStatus();
+    if (!status.available) { setAlarmKitAuth('unsupported'); return; }
+    setAlarmKitAuth(status.authorized ? 'authorized' : (status.authorization as any) ?? 'notDetermined');
+  };
+
+  const handleRequestAlarmKitPermission = async () => {
+    if (alarmKitAuth === 'denied') {
+      // Already denied — open iOS Settings
+      Linking.openSettings();
+      return;
+    }
+    const result = await ensureAlarmKitAuthorized();
+    setAlarmKitAuth(result);
+    if (result === 'authorized') {
+      Alert.alert('✅ Permiso concedido', 'Roo Alarm puede programar alarmas nativas. ¡Todo listo!');
+    } else if (result === 'denied') {
+      Alert.alert(
+        '⚠️ Permiso denegado',
+        'Has rechazado el permiso. Ve a Ajustes → Roo Alarm → Alarmas para activarlo.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Abrir Ajustes', onPress: () => Linking.openSettings() },
+        ]
+      );
+    }
+  };
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -257,6 +287,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   useEffect(() => {
     if (!user) return;
     loadSettings();
+    void loadAlarmKitStatus();
   }, [user]);
 
   const loadSettings = async () => {
@@ -426,7 +457,14 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         <SettingsRow 
           icon="lifesaver" 
           title={t('settingsScreen.rescueTokens')}
-          detail={rescueTokens.toString()} 
+          detail={rescueTokens.toString()}
+          control={<Icon name="info" size={20} color={colors.textDim} stroke={2} />}
+          onPress={() => {
+            Alert.alert(
+              t('settingsScreen.rescueTokensInfoTitle'),
+              t('settingsScreen.rescueTokensInfoBody')
+            );
+          }}
         />
         <SettingsRow
           icon="sparkle"
@@ -451,6 +489,28 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
               <Text style={styles.paywallBtnText}>{t('onboarding.subscribe')}</Text>
             </SquishyButton>
           </View>
+        )}
+
+        {/* ALARM PERMISSIONS */}
+        {Platform.OS === 'ios' && alarmKitAuth !== 'unsupported' && (
+          <>
+            <View style={styles.pad}>
+              <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>ALARMA NATIVA</Text>
+            </View>
+            <SettingsRow
+              icon="bell"
+              title="Permiso AlarmKit"
+              detail={
+                alarmKitAuth === 'authorized' ? '✅ Concedido' :
+                alarmKitAuth === 'denied' ? '❌ Denegado — toca para abrir Ajustes' :
+                alarmKitAuth === 'notDetermined' ? '⚠️ Toca para conceder' :
+                '…'
+              }
+              control={<Icon name="chevR" size={16} color={colors.textFaint} stroke={3} />}
+              onPress={handleRequestAlarmKitPermission}
+              last
+            />
+          </>
         )}
 
         {/* GENERAL & WAKE-UP */}
@@ -514,138 +574,35 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
               onPress={() => { setTempStreak(streak.toString()); setActivePopup('streak'); }}
             />
             <SettingsRow
-              icon="info"
-              title="Diagnóstico alarmas"
-              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
-              onPress={async () => {
-                const [capability, status, registry] = await Promise.all([
-                  getAlarmCapability(),
-                  getAlarmKitStatus(),
-                  getAlarmRegistry(),
-                ]);
-                const scheduled = Object.entries(registry)
-                  .map(([id, entry]) => {
-                    const mode = entry.usesAlarmKit ? 'AlarmKit' : `notif×${entry.notificationIds?.length ?? (entry.notificationId ? 1 : 0)}`;
-                    return `${id}: ${mode}`;
-                  })
-                  .join('\n') || '(ninguna en registro local)';
-                const pending = await Notifications.getAllScheduledNotificationsAsync();
-                const rooPending = pending.filter(
-                  (n) => n.content.data?.source === 'rooalarm' || n.content.data?.alarmId != null
-                ).length;
-                Alert.alert(
-                  'Diagnóstico alarmas',
-                  `Modo: ${capability.capability}\n` +
-                    `AlarmKit: ${status.available ? 'sí' : 'no'} (${status.authorization})\n` +
-                    `Notificaciones: ${capability.notificationsGranted ? 'sí' : 'no'}\n` +
-                    `Pendientes iOS: ${rooPending}\n\n` +
-                    `Registro local:\n${scheduled}`
-                );
-              }}
-            />
-            <SettingsRow
-              icon="refresh"
-              title="Reparar alarmas"
+              icon="rotate-ccw"
+              title="Reset Daily Completed"
               control={<Icon name="chevR" size={16} color={colors.textFaint} />}
               onPress={async () => {
                 if (!user) return;
                 try {
-                  const alarms = await fetchUserAlarms(user.id);
-                  const results = await repairAlarmSchedules(alarms, protectedDays);
-                  const activeAlarms = alarms.filter((a) => a.on);
-                  const summary = results.length
-                    ? results
-                        .map((r, i) => `${activeAlarms[i]?.id ?? '?'}: ${r.ok ? r.mode : r.reason}`)
-                        .join('\n')
-                    : 'Sin alarmas activas';
-                  Alert.alert('Reparar alarmas', summary);
-                } catch (err) {
-                  console.log('repairAlarmSchedules failed', err);
-                  Alert.alert('Roo Alarm', 'No se pudieron reprogramar las alarmas.');
-                }
-              }}
-            />
-            <SettingsRow
-              icon="refresh"
-              title={t('settingsScreen.resetDailyToday')}
-              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
-              onPress={async () => {
-                if (!user) return;
-                try {
-                  await resetDailyCompletionToday(user.id, protectedDays);
-                  Alert.alert('Roo Alarm', 'Daily de hoy reiniciada.');
-                } catch (err) {
-                  console.log('resetDailyCompletionToday failed', err);
-                  Alert.alert('Roo Alarm', 'No se pudo reiniciar la daily.');
-                }
-              }}
-            />
-            <SettingsRow
-              icon="check"
-              title={t('settingsScreen.markDailyCompletedToday')}
-              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
-              onPress={async () => {
-                if (!user) return;
-                try {
-                  const alarms = await fetchUserAlarms(user.id);
-                  const daily = getDailyAlarm(alarms);
-                  if (!daily) {
-                    Alert.alert('Roo Alarm', 'No hay daily alarm.');
-                    return;
+                  const { unmarkAlarmCompletedToday } = require('../lib/finalizeAlarmSuccess');
+                  const { supabase } = require('../lib/supabase');
+                  const { data: alarms } = await supabase.from('alarms').select('id').eq('user_id', user.id);
+                  if (alarms) {
+                    for (const a of alarms) {
+                      unmarkAlarmCompletedToday(a.id);
+                    }
+                    await supabase.from('alarms').update({
+                      last_completed_date: null,
+                      last_triggered_date: null
+                    }).eq('user_id', user.id);
+                    Alert.alert('Success', 'All alarms have been reset for today.');
                   }
-                  await markDailyCompletedToday(user.id, daily.id);
-                  Alert.alert('Roo Alarm', 'Daily marcada como completada hoy.');
-                } catch (err) {
-                  console.log('markDailyCompletedToday failed', err);
-                  Alert.alert('Roo Alarm', 'No se pudo marcar la daily.');
+                } catch (e: any) {
+                  Alert.alert('Error', e.message);
                 }
               }}
+              last
             />
-        <SettingsRow
-          icon="play"
-          title={t('settingsScreen.simulateAlarm')}
-          control={<Icon name="chevR" size={16} color={colors.textFaint} />}
-          onPress={async () => {
-            const result = await triggerSimulationNow();
-            if (result.mode === 'alarmkit') {
-              Alert.alert(
-                'Roo Alarm',
-                'La alarma del sistema sonará en 1 segundo. Pulsa Desbloquear en la pantalla de Apple; la app abrirá tu misión.'
-              );
-              return;
-            }
-            if (result.mode === 'notification') {
-              Alert.alert(
-                'Roo Alarm',
-                'Modo notificación (iOS < 26). Sonará en 1 segundo; ábrela para ir directo a la misión.'
-              );
-              return;
-            }
-            const capability = await getAlarmCapability();
-            if (result.reason === 'denied') {
-              Alert.alert(
-                'Permiso de alarmas necesario',
-                capability.capability === 'alarmkit'
-                  ? 'Activa las alarmas de Roo Alarm en Ajustes del sistema.'
-                  : 'Activa las notificaciones de Roo Alarm en Ajustes.',
-                [
-                  { text: 'Cancelar', style: 'cancel' },
-                  { text: 'Abrir Ajustes', onPress: openAlarmKitSettings },
-                ]
-              );
-              return;
-            }
-            Alert.alert(
-              'Roo Alarm',
-              capability.capability === 'alarmkit'
-                ? 'No se pudo programar la alarma. En Ajustes → RooAlarm activa Alarmas. Luego usa Reparar alarmas (modo dev).'
-                : 'Activa notificaciones o usa un iPhone con iOS 26+ para AlarmKit del sistema.'
-            );
-          }}
-          last
-        />
           </>
         )}
+
+
 
         {/* DANGER ZONE */}
         <View style={[styles.pad, { marginTop: 24 }]}>
@@ -696,6 +653,8 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                 </SquishyButton>
               </View>
             )}
+
+
 
             {activePopup === 'streak' && (
               <View style={styles.modalInner}>

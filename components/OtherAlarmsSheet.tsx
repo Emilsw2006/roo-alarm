@@ -59,7 +59,6 @@ export default function OtherAlarmsSheet({ visible, alarms, onClose, onEdit, onT
                   <View style={styles.alarmRight}>
                     <View style={styles.alarmTimeRow}>
                       <Text style={[styles.cardTime, { color: colors.text }]}>{al.time}</Text>
-                      <Text style={[styles.cardAmpm, { color: colors.textDim }]}>{al.ampm.toLowerCase()}</Text>
                     </View>
                     <Text style={[styles.cardLabel, { color: colors.textFaint }]}>
                       {al.specificDate ? `${new Date(al.specificDate).getDate()} ${new Date(al.specificDate).toLocaleString('default', { month: 'short' })} • ` : ''}

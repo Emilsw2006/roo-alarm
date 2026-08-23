@@ -152,13 +152,10 @@ export function useGlobalAlarmTrigger(
     const todayStr = now.toISOString().split('T')[0];
     if (due.lastCompletedDate === todayStr || wasAlarmCompletedToday(due.id)) return;
 
-    // iOS AlarmKit: el sistema ya hace sonar la alarma programada y el re-disparo al
-    // deslizar lo gestiona flushSlideRetrigger. Aquí solo marcamos para no generar
-    // notificaciones de respaldo.
-    if (Platform.OS === 'ios' && alarmKitActiveRef.current) {
-      if (due.lastTriggeredDate !== todayStr) void markAlarmTriggered(due, todayStr);
-      return;
-    }
+    // Eliminamos el early return en iOS. Si AlarmKit sonó y el usuario pulsó el
+    // cuerpo de la notificación (sin ejecutar el Intent), o simplemente abrió la
+    // app un poco después, tenemos que forzar la misión.
+    // openAlarmForRecord en iOS navega directamente a AlarmMission.
 
     void openAlarmForRecord(due);
   }, [enabled, markAlarmTriggered, openAlarmForRecord, userId]);

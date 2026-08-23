@@ -30,47 +30,8 @@ interface EditSheetProps {
   onMissionSettingsSave?: (next: { missionMode: MissionMode; enabledMissions: string[]; personalizedMission: string }) => void | Promise<void>;
 }
 
-const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1));
+const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
 const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
-
-function AmPmToggle({
-  value,
-  onChange,
-  accentColor,
-  textColor,
-  morningHint,
-  afternoonHint,
-}: {
-  value: 'AM' | 'PM';
-  onChange: (v: 'AM' | 'PM') => void;
-  accentColor: string;
-  textColor: string;
-  morningHint?: string;
-  afternoonHint?: string;
-}) {
-  return (
-    <View style={styles.ampmContainer}>
-      <TouchableOpacity
-        style={[styles.ampmBtn, value === 'AM' ? { backgroundColor: accentColor + '20' } : { backgroundColor: 'transparent' }]}
-        onPress={() => onChange('AM')}
-      >
-        <Text style={[styles.ampmText, value === 'AM' ? { color: accentColor } : { color: textColor + '40' }]}>AM</Text>
-        {morningHint ? (
-          <Text style={[styles.ampmHint, value === 'AM' ? { color: accentColor } : { color: textColor + '55' }]}>{morningHint}</Text>
-        ) : null}
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.ampmBtn, value === 'PM' ? { backgroundColor: accentColor + '20' } : { backgroundColor: 'transparent' }]}
-        onPress={() => onChange('PM')}
-      >
-        <Text style={[styles.ampmText, value === 'PM' ? { color: accentColor } : { color: textColor + '40' }]}>PM</Text>
-        {afternoonHint ? (
-          <Text style={[styles.ampmHint, value === 'PM' ? { color: accentColor } : { color: textColor + '55' }]}>{afternoonHint}</Text>
-        ) : null}
-      </TouchableOpacity>
-    </View>
-  );
-}
 
 const WEEKDAY_SHORT = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 
@@ -113,16 +74,16 @@ export default function EditSheet({
   
   const [hour, setHour] = useState(() => {
     let [h] = alarm.time.split(':');
-    if (h === '0') h = '12';
-    return h;
+    let hourNum = parseInt(h, 10);
+    if (alarm.ampm === 'PM' && hourNum < 12) hourNum += 12;
+    if (alarm.ampm === 'AM' && hourNum === 12) hourNum = 0;
+    return String(hourNum).padStart(2, '0');
   });
   
   const [minute, setMinute] = useState(() => {
     const [, m] = alarm.time.split(':');
     return m.padStart(2, '0');
   });
-
-  const [ampm, setAmpm] = useState<'AM'|'PM'>(alarm.ampm || 'AM');
 
   useEffect(() => {
     if (visible) {
@@ -136,12 +97,15 @@ export default function EditSheet({
       );
       setLocalPersonalizedMission(normalizeMissionId(isDaily ? personalizedMission : alarm.mission));
       setCustomMissionText(alarm.customMission || '');
+      
       let [h] = alarm.time.split(':');
-      if (h === '0') h = '12';
-      setHour(h);
+      let hourNum = parseInt(h, 10);
+      if (alarm.ampm === 'PM' && hourNum < 12) hourNum += 12;
+      if (alarm.ampm === 'AM' && hourNum === 12) hourNum = 0;
+      setHour(String(hourNum).padStart(2, '0'));
+      
       const [, m] = alarm.time.split(':');
       setMinute(m.padStart(2, '0'));
-      setAmpm(alarm.ampm || 'AM');
       setDate(alarm.specificDate ? parseDateOnlyIso(alarm.specificDate) : new Date());
       setExpandedPicker(null);
     }
@@ -157,14 +121,18 @@ export default function EditSheet({
     if (isSaving) return;
     setIsSaving(true);
     try {
+      const hourNum = parseInt(hour, 10);
+      const computedAmpm = hourNum >= 12 ? 'PM' : 'AM';
+      // Guardamos la hora en formato 24H directamente para que la UI la muestre en 24H
       const timeStr = `${hour}:${minute}`;
+
       const savedMission = localMissionMode === 'personalized'
         ? localPersonalizedMission
         : (localEnabledMissions[0] || DEFAULT_PERSONALIZED_MISSION);
       const payload = {
         ...alarm,
         time: timeStr,
-        ampm,
+        ampm: computedAmpm,
         mission: savedMission,
         missionMode: localMissionMode,
         enabledMissions: localEnabledMissions,
@@ -546,14 +514,6 @@ export default function EditSheet({
                 accentColor={colors.accSolid}
               />
             </View>
-            <AmPmToggle
-              value={ampm}
-              onChange={setAmpm}
-              accentColor={colors.accSolid}
-              textColor={colors.text}
-              morningHint={isDaily ? t('sheets.periodMorning') : undefined}
-              afternoonHint={isDaily ? t('sheets.periodAfternoon') : undefined}
-            />
           </View>
         </View>
 
