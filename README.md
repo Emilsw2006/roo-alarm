@@ -4,15 +4,21 @@ Gamified wake-up alarm for iOS. One daily alarm, photo missions to dismiss, stre
 
 **Bundle ID:** `com.roo.alarm`
 
-## App Store screenshots (raw)
+## Screenshots
 
-Marketing captures for store listings live in [`appstore-screenshots/`](appstore-screenshots/):
+![RooAlarm home screen](screenshots/01-home.png)
+
+![RooAlarm alarm mission](screenshots/02-alarm.png)
+
+![RooAlarm settings](screenshots/03-settings.png)
+
+Raw PNGs: [`screenshots/`](screenshots/) · [`appstore-screenshots/`](appstore-screenshots/)
 
 | File | Screen |
 |------|--------|
 | `01-home.png` | Home — daily alarm, streak, Roo |
-| `02-alarma.png` | Alarm mission flow |
-| `03-ajustes.png` | Settings — missions, sounds, subscription |
+| `02-alarm.png` | Alarm mission flow |
+| `03-settings.png` | Settings — missions, sounds, subscription |
 
 ## Stack
 
