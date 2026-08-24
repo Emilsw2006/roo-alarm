@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Dimensions, Image, Platform } from 'react-native';
+import { View, Text, StyleSheet, Animated, Dimensions, Image, Platform, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
@@ -23,9 +23,10 @@ import { useColors } from '../constants/ThemeContext';
 import { configurePlaybackAudio, createRooAudioPlayer, RooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
 import { finishMissionTimeout, onMissionTimerExpired } from '../lib/missionTimeout';
 import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
-import { cancelDismissRetrigger } from '../lib/alarmScheduler';
+import { cancelDismissRetrigger, scheduleMissionWatchdog } from '../lib/alarmScheduler';
 
 const TOTAL = 60;
+const MAX_ROULETTE_REROLLS = 2;
 const { width } = Dimensions.get('window');
 const ROO_IMAGE = require('../assets/entrevistador.png');
 const ROULETTE_TICK = require('../assets/sounds/roulette_tick.wav');
@@ -52,8 +53,12 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
   const [phase, setPhase] = useState<'intro' | 'roulette'>('intro');
   const [isRolling, setIsRolling] = useState(false);
   const [continuePressed, setContinuePressed] = useState(false);
+  const [rerollsLeft, setRerollsLeft] = useState(MAX_ROULETTE_REROLLS);
+  const [lockedMission, setLockedMission] = useState<Mission | null>(null);
   const [rollIndex, setRollIndex] = useState(0);
+  const [missionResolved, setMissionResolved] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const rouletteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const itemScale = useRef(new Animated.Value(1)).current;
   const expiresAtRef = useRef(Date.now() + TOTAL * 1000);
@@ -70,7 +75,15 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
     if (fromAlarmKit && alarm?.id && Platform.OS === 'ios') {
       void cancelDismissRetrigger(alarm.id);
     }
+    if (Platform.OS === 'ios' && alarm?.id) {
+      void scheduleMissionWatchdog(alarm);
+    }
   }, [fromAlarmKit, alarm?.id]);
+
+  useEffect(() => {
+    const safety = setTimeout(() => setMissionResolved(true), 3000);
+    return () => clearTimeout(safety);
+  }, []);
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 360, useNativeDriver: true }).start();
@@ -83,6 +96,7 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (rouletteTimeoutRef.current) clearTimeout(rouletteTimeoutRef.current);
       stopRooAudioPlayer(tickSoundRef.current);
     };
   }, []);
@@ -135,54 +149,47 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
   };
 
   const resolveMission = async () => {
-    if (!isDaily && alarm?.missionMode === 'roulette') {
-      startRoulettePool(alarm.enabledMissions);
-      return;
-    }
-
-    if (!isDaily) {
-      if (user) {
-        const { data } = await supabase
-          .from('user_settings')
-          .select('mission_mode, enabled_missions')
-          .eq('user_id', user.id)
-          .single();
-        if (data?.mission_mode === 'roulette') {
-          startRoulettePool(Array.isArray(data.enabled_missions) ? data.enabled_missions : null);
+    try {
+      // Alarmas one-off: respetan su propio missionMode. No heredar roulette global.
+      if (!isDaily) {
+        if (alarm?.missionMode === 'roulette') {
+          startRoulettePool(alarm.enabledMissions);
           return;
         }
+        setMissionMode('personalized');
+        setMission(getMission(alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
+        return;
       }
+
+      if (!user) {
+        setMission(getMission(alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
+        return;
+      }
+
+      // Si Supabase no responde no podemos dejar la misión sin resolver: el usuario
+      // ya está despierto y el temporizador corre. Caemos al modo por defecto.
+      let data: { mission_mode?: string; enabled_missions?: unknown; personalized_mission?: string; default_mission?: string } | null = null;
+      try {
+        const result = await supabase
+          .from('user_settings')
+          .select('mission_mode, enabled_missions, personalized_mission, default_mission')
+          .eq('user_id', user.id)
+          .single();
+        data = result.data;
+      } catch (error) {
+        console.log('resolveMission settings error', error);
+      }
+
+      if (data?.mission_mode === 'roulette') {
+        startRoulettePool(Array.isArray(data.enabled_missions) ? data.enabled_missions : null);
+        return;
+      }
+
       setMissionMode('personalized');
-      setMission(getMission(alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
-      return;
+      setMission(getMission(data?.personalized_mission || data?.default_mission || alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
+    } finally {
+      setMissionResolved(true);
     }
-
-    if (!user) {
-      setMission(getMission(alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
-      return;
-    }
-
-    // Si Supabase no responde no podemos dejar la misión sin resolver: el usuario
-    // ya está despierto y el temporizador corre. Caemos al modo por defecto.
-    let data: { mission_mode?: string; enabled_missions?: unknown; personalized_mission?: string; default_mission?: string } | null = null;
-    try {
-      const result = await supabase
-        .from('user_settings')
-        .select('mission_mode, enabled_missions, personalized_mission, default_mission')
-        .eq('user_id', user.id)
-        .single();
-      data = result.data;
-    } catch (error) {
-      console.log('resolveMission settings error', error);
-    }
-
-    if (data?.mission_mode === 'roulette') {
-      startRoulettePool(Array.isArray(data.enabled_missions) ? data.enabled_missions : null);
-      return;
-    }
-
-    setMissionMode('personalized');
-    setMission(getMission(data?.personalized_mission || data?.default_mission || alarm?.mission || DEFAULT_PERSONALIZED_MISSION));
   };
 
   const playFinishSound = async () => {
@@ -217,8 +224,9 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
     });
   };
 
-  const startRoulette = () => {
+  const startRoulette = (options?: { isReroll?: boolean }) => {
     const pool = roulettePool.length > 0 ? roulettePool : MISSION_LIST;
+    if (pool.length === 0) return;
     const winner = pool[Math.floor(Math.random() * pool.length)];
     const winnerIndex = pool.findIndex(item => item.id === winner.id);
     const totalSteps = 25 + Math.max(0, winnerIndex);
@@ -242,32 +250,44 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
 
       if (step >= totalSteps) {
         setMission(winner);
+        setLockedMission(winner);
         setRollIndex(winnerIndex);
         setIsRolling(false);
         playFinishSound();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setTimeout(() => goToCamera(winner), 520);
         return;
       }
 
       step += 1;
       delay = step > totalSteps - 7 ? delay + 44 : Math.min(delay + 6, 90);
-      setTimeout(tick, delay);
+      rouletteTimeoutRef.current = setTimeout(tick, delay);
     };
 
     tick();
   };
 
   const handleContinue = async () => {
+    if (!missionResolved) return;
     setContinuePressed(true);
     if (missionMode === 'roulette') {
       if (!permission?.granted) {
         await requestPermission();
       }
+      if (lockedMission && !isRolling) {
+        goToCamera(lockedMission);
+        return;
+      }
       if (!isRolling) startRoulette();
       return;
     }
     setTimeout(() => goToCamera(mission), 180);
+  };
+
+  const handleReroll = () => {
+    if (isRolling || rerollsLeft <= 0 || !lockedMission) return;
+    setRerollsLeft((prev) => prev - 1);
+    setLockedMission(null);
+    startRoulette({ isReroll: true });
   };
 
   const pool = roulettePool.length > 0 ? roulettePool : MISSION_LIST;
@@ -322,13 +342,13 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
             </View>
 
             <SquishyButton
-              onPress={handleContinue}
-              color={continuePressed ? '#E64235' : '#FFFFFF'}
-              shadowColor={continuePressed ? 'rgba(179, 45, 35, 0.42)' : 'rgba(0,0,0,0.16)'}
+              onPress={missionResolved && !continuePressed ? handleContinue : undefined}
+              color={continuePressed || !missionResolved ? '#E64235' : '#FFFFFF'}
+              shadowColor={continuePressed || !missionResolved ? 'rgba(179, 45, 35, 0.42)' : 'rgba(0,0,0,0.16)'}
               borderRadius={18}
               contentStyle={styles.primaryBtn}
             >
-              <Text style={[styles.primaryText, { color: continuePressed ? '#FFFFFF' : '#2B211B' }]}>{t('alarmFlow.unlock')}</Text>
+              <Text style={[styles.primaryText, { color: continuePressed || !missionResolved ? '#FFFFFF' : '#2B211B' }]}>{t('alarmFlow.unlock')}</Text>
             </SquishyButton>
           </>
         ) : (
@@ -368,7 +388,30 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
               <Text style={styles.rouletteBrandText}>Roo Alarm</Text>
             </View>
 
-            <View style={styles.rouletteBottomSpacer} />
+            {lockedMission && !isRolling ? (
+              <View style={styles.rouletteActions}>
+                <SquishyButton
+                  onPress={handleContinue}
+                  color="#FFFFFF"
+                  shadowColor="rgba(0,0,0,0.18)"
+                  borderRadius={18}
+                  contentStyle={styles.primaryBtn}
+                >
+                  <Text style={[styles.primaryText, { color: '#2B211B' }]}>{t('alarmFlow.acceptMission')}</Text>
+                </SquishyButton>
+                {rerollsLeft > 0 ? (
+                  <TouchableOpacity onPress={handleReroll} activeOpacity={0.8} style={styles.rerollBtn}>
+                    <Text style={styles.rerollText}>
+                      {t('alarmFlow.spinAgain')} ({rerollsLeft}/2)
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.rerollLimit}>{t('alarmFlow.noMoreSpins')}</Text>
+                )}
+              </View>
+            ) : (
+              <View style={styles.rouletteBottomSpacer} />
+            )}
           </>
         )}
       </Animated.View>
@@ -424,4 +467,8 @@ const styles = StyleSheet.create({
   rouletteRoo: { width: 32, height: 32, resizeMode: 'contain' },
   rouletteBrandText: { color: 'rgba(255,255,255,0.92)', fontSize: 18, fontFamily: FONT_FAMILY.black },
   rouletteBottomSpacer: { height: 86 },
+  rouletteActions: { width: '100%', gap: 12, paddingBottom: 8 },
+  rerollBtn: { alignItems: 'center', paddingVertical: 10 },
+  rerollText: { color: 'rgba(255,255,255,0.88)', fontSize: 15, fontFamily: FONT_FAMILY.bold },
+  rerollLimit: { color: 'rgba(255,255,255,0.55)', fontSize: 13, fontFamily: FONT_FAMILY.semiBold, textAlign: 'center' },
 });

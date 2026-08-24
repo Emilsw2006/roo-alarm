@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
+import { PostHogProvider } from 'posthog-react-native';
 import { ThemeProvider } from './constants/ThemeContext';
 import { LanguageProvider } from './constants/LanguageContext';
 import { AuthProvider, useAuth } from './constants/AuthContext';
@@ -180,30 +181,56 @@ export default function App() {
     return () => clearTimeout(timeoutId);
   }, [fontsLoaded]);
 
+  const routeNameRef = useRef<string | null>(null);
+
   if (!fontsReady) {
     return <AppLoadingScreen />;
   }
 
+  const posthogApiKey = process.env.EXPO_PUBLIC_POSTHOG_API_KEY;
+  const posthogHost = process.env.EXPO_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com';
+
   return (
-    <SafeAreaProvider>
-      <LanguageProvider>
-        <AuthProvider>
-          <SubscriptionProvider>
-            <ThemeProvider>
-              <OnboardingProvider>
-                <NavigationContainer ref={navigationRef}>
-                  <OnboardingPersistenceBridge />
-                  <AlarmPermissionsBridge />
-                  <AlarmForegroundSyncBridge />
-                  <GlobalAlarmBridge />
-                  <AlarmKitLaunchBridge />
-                  <AppNavigator />
-                </NavigationContainer>
-              </OnboardingProvider>
-            </ThemeProvider>
-          </SubscriptionProvider>
-        </AuthProvider>
-      </LanguageProvider>
-    </SafeAreaProvider>
+    <PostHogProvider apiKey={posthogApiKey} options={{ host: posthogHost }} autocapture={false}>
+      <SafeAreaProvider>
+        <LanguageProvider>
+          <AuthProvider>
+            <SubscriptionProvider>
+              <ThemeProvider>
+                <OnboardingProvider>
+                  <NavigationContainer 
+                    ref={navigationRef}
+                    onReady={() => {
+                      routeNameRef.current = navigationRef.getCurrentRoute()?.name || null;
+                    }}
+                    onStateChange={() => {
+                      const previousRouteName = routeNameRef.current;
+                      const currentRouteName = navigationRef.getCurrentRoute()?.name;
+
+                      if (currentRouteName && previousRouteName !== currentRouteName) {
+                        try {
+                          const posthogInstance = require('posthog-react-native').default;
+                          posthogInstance.screen(currentRouteName);
+                        } catch (e) {
+                          console.warn('[Analytics] Failed to track screen transition', e);
+                        }
+                      }
+                      routeNameRef.current = currentRouteName || null;
+                    }}
+                  >
+                    <OnboardingPersistenceBridge />
+                    <AlarmPermissionsBridge />
+                    <AlarmForegroundSyncBridge />
+                    <GlobalAlarmBridge />
+                    <AlarmKitLaunchBridge />
+                    <AppNavigator />
+                  </NavigationContainer>
+                </OnboardingProvider>
+              </ThemeProvider>
+            </SubscriptionProvider>
+          </AuthProvider>
+        </LanguageProvider>
+      </SafeAreaProvider>
+    </PostHogProvider>
   );
 }

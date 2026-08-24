@@ -53,7 +53,8 @@
       "expo-notifications",
       "expo-asset",
       "./plugins/withAlarmKit.js",
-      "./plugins/withStoreKit.js"
+      "./plugins/withStoreKit.js",
+      "expo-localization"
     ],
     "extra": {
       "eas": {

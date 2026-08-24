@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-2.0-flash-lite";
+const GEMINI_MODEL_DEFAULT = "gemini-3.5-flash-lite";
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 type VerifyInput = {
@@ -79,10 +79,13 @@ Deno.serve(async (req) => {
     });
   }
 
-  const apiKey = Deno.env.get("GEMINI_API_KEY");
+  const apiKey = Deno.env.get("GEMINI_API_KEY")?.trim();
   if (!apiKey) {
+    console.error("verify-mission-photo: GEMINI_API_KEY missing at runtime — redeploy function after setting secrets");
     return jsonResponse({ passed: false, unavailable: true, reason: "missing_api_key" }, 503);
   }
+
+  const model = (Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash-lite").trim();
 
   let input: VerifyInput;
   try {
@@ -115,33 +118,42 @@ Deno.serve(async (req) => {
     .join("\n");
 
   try {
-    const response = await fetch(
-      `${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: prompt },
-                {
-                  inline_data: {
-                    mime_type: mimeType,
-                    data: input.imageBase64,
+    const geminiController = new AbortController();
+    const geminiTimeout = setTimeout(() => geminiController.abort(), 10_000);
+
+    let response: Response;
+    try {
+      response = await fetch(
+        `${GEMINI_API_BASE}/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: geminiController.signal,
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: prompt },
+                  {
+                    inline_data: {
+                      mime_type: mimeType,
+                      data: input.imageBase64,
+                    },
                   },
-                },
-              ],
+                ],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 256,
+              responseMimeType: "application/json",
             },
-          ],
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 256,
-            responseMimeType: "application/json",
-          },
-        }),
-      },
-    );
+          }),
+        },
+      );
+    } finally {
+      clearTimeout(geminiTimeout);
+    }
 
     if (!response.ok) {
       const body = await response.text();
@@ -164,6 +176,8 @@ Deno.serve(async (req) => {
     return jsonResponse(parsed);
   } catch (err) {
     console.error("verify-mission-photo error", err);
-    return jsonResponse({ passed: false, unavailable: true, reason: "api_error" }, 502);
+    const reason =
+      err instanceof DOMException && err.name === "AbortError" ? "timeout" : "api_error";
+    return jsonResponse({ passed: false, unavailable: true, reason }, 502);
   }
 });

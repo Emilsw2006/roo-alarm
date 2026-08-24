@@ -18,8 +18,13 @@ const TIERS = [
   { id: 'tier3', name: 'ACTIVO', required: 8, target: 13, color: '#FFD700', image: ROO_ASSETS.level3.base },
   { id: 'tier4', name: 'PRO', required: 13, target: 18, color: '#50c8ff', image: ROO_ASSETS.level4.base },
   { id: 'tier5', name: 'LEYENDA', required: 18, target: 21, color: '#FF3B30', image: ROO_ASSETS.level5.base },
-  { id: 'endgame', name: 'SALÓN DE LA FAMA', required: 21, target: 21, color: '#000000', image: ROO_ASSETS.level6.base },
+  { id: 'endgame', name: 'SALÓN DE LA FAMA', required: 21, target: 21, color: '#FF9500', image: ROO_ASSETS.level6.base },
 ];
+
+// Nodo "próximamente" al final del camino
+const COMING_SOON_NODE = { color: 'rgba(150,150,150,0.4)' };
+
+
 
 export default function EvolutionTimelineSheet({ visible, streak, onClose }: EvolutionTimelineSheetProps) {
   const { colors } = useColors();
@@ -87,6 +92,10 @@ export default function EvolutionTimelineSheet({ visible, streak, onClose }: Evo
                   {index < TIERS.length - 1 && progress > 0 && (
                     <Animated.View style={[styles.line, { backgroundColor: tier.color, zIndex: 1, height: partialLineHeight }]} />
                   )}
+                  {/* Línea punteada hacia el "próximamente" desde el último tier */}
+                  {index === TIERS.length - 1 && (
+                    <View style={[styles.line, { backgroundColor: 'transparent', borderLeftWidth: 3, borderLeftColor: colors.surface2, borderStyle: 'dashed' }]} />
+                  )}
 
                   {/* Character Icon (Gamified Coin) */}
                   <Animated.View style={[
@@ -140,6 +149,27 @@ export default function EvolutionTimelineSheet({ visible, streak, onClose }: Evo
                 </View>
               );
             })}
+
+            {/* Nodo "Próximamente" — el camino continúa */}
+            <View style={styles.tierRow}>
+              <View style={[styles.imageContainer, {
+                backgroundColor: colors.surface,
+                borderColor: colors.surface2,
+                borderWidth: 3,
+                borderBottomWidth: 8,
+                borderStyle: 'dashed',
+              }]}>
+                <Text style={{ fontSize: 28 }}>🔮</Text>
+              </View>
+              <View style={[styles.tierInfo, { justifyContent: 'center' }]}>
+                <Text style={[styles.tierName, { color: colors.textFaint, fontSize: 16 }]}>
+                  {t('comingSoonTitle')}
+                </Text>
+                <Text style={[styles.tierSub, { color: colors.textFaint, fontSize: 13, fontFamily: FONT_FAMILY.regular, marginTop: 6 }]}>
+                  {t('comingSoonSub')}
+                </Text>
+              </View>
+            </View>
           </ScrollView>
           
           <View style={{ position: 'absolute', bottom: -500, left: 0, right: 0, height: 500, backgroundColor: colors.bg }} />

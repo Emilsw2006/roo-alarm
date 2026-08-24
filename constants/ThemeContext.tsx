@@ -259,7 +259,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         settingsChanged = true;
       }
       
-      if (s > 0 && (s % 30 === 0 || s === 3)) {
+      if (s > 0 && (s % 30 === 0 || s === 3 || s === 21)) {
         newTokens += 1;
         settingsChanged = true;
       }

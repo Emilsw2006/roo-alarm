@@ -447,6 +447,7 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
       setAnimateDayIndex(null);
       
       const todayStr = new Date().toISOString().split('T')[0];
+      const nextStreak = streak + 1;
       
       // Update local daily alarm
       if (dailyAlarm) {
@@ -457,6 +458,9 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
         };
         setAlarms(prev => prev.map(a => a.id === dailyAlarm.id ? updatedAlarm : a));
       }
+
+      // Persist streak + calendar immediately so leaving Home mid-animation doesn't lose today.
+      void setStreak(nextStreak);
 
       // Record in Supabase
       if (user && dailyAlarm) {
@@ -471,7 +475,7 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
 
       setTimeout(() => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setAnimateToStreak(streak + 1);
+        setAnimateToStreak(nextStreak);
         setShowParticles(true);
       }, 500);
 
@@ -480,7 +484,7 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
         oldOpacity.setValue(1);
         newScale.setValue(0.92);
         newOpacity.setValue(0);
-        setNextVisualStreak(streak + 1);
+        setNextVisualStreak(nextStreak);
         
         Animated.parallel([
           Animated.timing(oldScale, { toValue: 0.92, duration: 900, useNativeDriver: true }),
@@ -506,8 +510,6 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
       setTimeout(() => {
         const nextStreak = streak + 1;
         
-        // Update streak
-        setStreak(nextStreak);
         setVisualStreak(nextStreak);
         setNextVisualStreak(null);
         setStreakVisible(true);

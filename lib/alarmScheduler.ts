@@ -53,6 +53,7 @@ type AlarmKitNativeModule = {
   clearPendingAlarmLaunch?: () => Promise<boolean>;
   consumePendingDismissRetrigger?: () => Promise<string | null>;
   triggerSimulationNow: (title: string, body: string, soundId: string, alarmId: string) => Promise<boolean>;
+  scheduleMissionWatchdog: (alarmId: string, title: string, delaySeconds: number) => Promise<boolean>;
   consumePendingAlarmLaunch?: () => Promise<string | null>;
 };
 
@@ -60,6 +61,26 @@ const alarmKitModule: AlarmKitNativeModule | undefined = NativeModules.AlarmKitM
 
 let notificationsConfigured = false;
 const alarmKitManagedIds = new Set<string>();
+
+type AlarmChangeListener = () => void;
+const alarmChangeListeners = new Set<AlarmChangeListener>();
+
+export const subscribeToAlarmChanges = (listener: AlarmChangeListener) => {
+  alarmChangeListeners.add(listener);
+  return () => {
+    alarmChangeListeners.delete(listener);
+  };
+};
+
+export const notifyAlarmChanges = () => {
+  alarmChangeListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch (e) {
+      console.warn('[RooAlarm] Error in alarm change listener', e);
+    }
+  });
+};
 
 export type ScheduleAlarmOptions = {
   protectedDays?: number[];
@@ -79,7 +100,19 @@ export const prefersAlarmKitScheduling = async (): Promise<boolean> => {
 
 const canUseAlarmKit = () => Platform.OS === 'ios' && !!alarmKitModule;
 
-const resolveSoundId = (_alarm: Alarm) => DEFAULT_SOUND_ID;
+const resolveSoundId = (alarm: Alarm) => {
+  const sound = alarm.sound || 'default';
+  const mapping: Record<string, string> = {
+    bell_local: 'bell.mp3',
+    bird: 'bird.mp3',
+    digital_local: 'digital_alarm.mp3',
+    emergency_local: 'emergency.mp3',
+    radar_local: 'radar_classic.mp3',
+    rain: 'rain.mp3',
+    rooster_local: 'rooster.mp3',
+  };
+  return mapping[sound] || 'default';
+};
 
 const normalizeProtectedDays = (days?: number[]) => {
   if (!Array.isArray(days)) return ALL_WEEK_DAYS;
@@ -331,10 +364,11 @@ const scheduleLocalNotification = async (alarm: Alarm, protectedDays: number[]):
   const title = alarm.label || 'Roo Alarm';
   const body = `Es la hora de tu alarma (${alarm.time} ${alarm.ampm})`;
 
+  const soundFile = resolveSoundId(alarm);
   const content: Notifications.NotificationContentInput = {
     title,
     body,
-    sound: 'default',
+    sound: soundFile === 'default' ? 'default' : soundFile,
     data: { alarmId: alarm.id, source: 'rooalarm' },
     ...(Platform.OS === 'ios' ? { interruptionLevel: 'timeSensitive' as const } : {}),
   };
@@ -394,6 +428,7 @@ export const cancelAlarmSchedule = async (alarmId: number | string) => {
   delete registry[key];
   alarmKitManagedIds.delete(key);
   await saveRegistry(registry);
+  notifyAlarmChanges();
 };
 
 export const scheduleAlarm = async (
@@ -418,19 +453,6 @@ export const scheduleAlarm = async (
   const scheduleDays = resolveScheduleDays(alarm, options?.protectedDays ?? ALL_WEEK_DAYS);
   const capability = await getAlarmCapability();
 
-  let notificationIds: string[] = [];
-  const permissionGranted = await ensureNotificationPermissions();
-  
-  // El usuario solicitó eliminar notificaciones y depender solo de AlarmKit.
-  // if (permissionGranted) {
-  //   notificationIds = await scheduleLocalNotification(alarm, scheduleDays);
-  //   if (notificationIds.length === 0) {
-  //     console.warn('[RooAlarm] No local notifications scheduled for alarm', key);
-  //   }
-  // } else {
-  //   console.warn('[RooAlarm] Notification permission denied while scheduling alarm', key);
-  // }
-
   let usesAlarmKit = false;
   if (Platform.OS === 'ios' && capability.capability === 'alarmkit') {
     const auth = await ensureAlarmKitAuthorized();
@@ -439,6 +461,21 @@ export const scheduleAlarm = async (
     }
     if (!usesAlarmKit) {
       console.warn('[RooAlarm] AlarmKit schedule failed for alarm', key, auth);
+    }
+  }
+
+  let notificationIds: string[] = [];
+  // Si no se usa AlarmKit (porque el dispositivo no es iOS 26+ o no está autorizado),
+  // activamos las notificaciones locales tradicionales para que la alarma pueda sonar.
+  if (!usesAlarmKit) {
+    const permissionGranted = await ensureNotificationPermissions();
+    if (permissionGranted) {
+      notificationIds = await scheduleLocalNotification(alarm, scheduleDays);
+      if (notificationIds.length === 0) {
+        console.warn('[RooAlarm] No local notifications scheduled for alarm', key);
+      }
+    } else {
+      console.warn('[RooAlarm] Notification permission denied while scheduling alarm', key);
     }
   }
 
@@ -465,6 +502,8 @@ export const scheduleAlarm = async (
   console.log(
     `[RooAlarm] Scheduled alarm ${key} mode=${mode} next=${nextFire?.toISOString() ?? 'none'} notifications=${notificationIds.length}`
   );
+
+  notifyAlarmChanges();
 
   if (nothingScheduled) {
     return { ok: false, reason: 'alarmkit_unavailable' };
@@ -552,6 +591,40 @@ export const cancelDismissRetrigger = async (alarmId: number | string): Promise<
   } catch (err) {
     console.warn('[RooAlarm] cancelDismissRetrigger error', err);
   }
+};
+
+const MISSION_WATCHDOG_DELAY = 70;
+
+/**
+ * Red de seguridad nativa: programa una alarma a 70s para que si la app
+ * muere durante la misión, el usuario vuelva a escuchar la alarma.
+ * Se cancela automáticamente al completar la misión via settleAlarmAfterCompletion.
+ */
+export const scheduleMissionWatchdog = async (alarm: Alarm): Promise<boolean> => {
+  if (!alarm?.id) return false;
+  const title = alarm.label || 'Roo Alarm';
+
+  if (canUseAlarmKit()) {
+    try {
+      const auth = await ensureAlarmKitAuthorized();
+      if (auth === 'authorized') {
+        const ok = await withAlarmKitLock(() =>
+          alarmKitModule!.scheduleMissionWatchdog(
+            String(alarm.id),
+            title,
+            MISSION_WATCHDOG_DELAY,
+          ),
+        );
+        if (ok) return true;
+        console.warn('[RooAlarm] scheduleMissionWatchdog AlarmKit returned false');
+      }
+    } catch (err) {
+      console.warn('[RooAlarm] scheduleMissionWatchdog AlarmKit error', err);
+    }
+  }
+
+  // Fallback para Android o si AlarmKit falló: notificación local
+  return retriggerWithNotificationFallback(alarm, MISSION_WATCHDOG_DELAY);
 };
 
 /** Lee (y borra) el re-disparo pendiente que dejó el deslizar nativo. Devuelve el id de alarma. */
@@ -652,11 +725,12 @@ const retriggerWithNotificationFallback = async (
       console.warn('[RooAlarm] retrigger notification fallback: permission denied');
       return false;
     }
+    const soundFile = resolveSoundId(alarm);
     await Notifications.scheduleNotificationAsync({
       content: {
         title: alarm.label || 'Roo Alarm',
         body: 'Completa tu misión para parar la alarma',
-        sound: 'default',
+        sound: soundFile === 'default' ? 'default' : soundFile,
         data: { alarmId: alarm.id, source: 'rooalarm-retrigger' },
         ...(Platform.OS === 'ios' ? { interruptionLevel: 'timeSensitive' as const } : {}),
       },

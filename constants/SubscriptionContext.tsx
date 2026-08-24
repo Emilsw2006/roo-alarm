@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import Purchases, { CustomerInfo, PurchasesPackage } from 'react-native-purchases';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
+import { trackEvent } from '../lib/analytics';
 import { openManageSubscriptions } from '../lib/manageSubscriptions';
 import { scheduleTrialReminderNotification } from '../lib/trialReminder';
 import { annualTrialEndDate, isAnnualTrialPurchase, resolveTrialDaysFromProduct } from '../lib/subscriptionPricing';
@@ -249,8 +250,19 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   const purchasePlan = useCallback(async (plan: PlanKey) => {
     if (!user?.id) return { success: false, error: 'Inicia sesión para continuar.' };
 
+    trackEvent('purchase_initiated', { plan });
+
     const apiKey = getApiKey();
     if (!apiKey || !configured) {
+      // Solo en desarrollo: sin RevenueCat no se puede cobrar de verdad.
+      // En release nunca regalar premium (App Store / pagos reales).
+      if (!__DEV__) {
+        trackEvent('purchase_failed', { plan, error: 'RevenueCat not configured' });
+        return {
+          success: false,
+          error: error ?? 'Las compras no están disponibles ahora. Revisa la conexión e inténtalo de nuevo.',
+        };
+      }
       setError(null);
       setSimulatedPremiumAccess(true);
       await persistPremiumFlag(user.id, true);
@@ -260,11 +272,13 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         const trialDays = resolveTrialDaysFromProduct(findPackage(packages, plan));
         await scheduleTrialReminderNotification(annualTrialEndDate(undefined, trialDays));
       }
+      trackEvent('purchase_success', { plan, devMode: true });
       return { success: true, error: null };
     }
 
     const selectedPackage = findPackage(packages, plan);
     if (!selectedPackage) {
+      trackEvent('purchase_failed', { plan, error: 'Package not found in RevenueCat offerings' });
       return { success: false, error: 'Los planes aún no están disponibles. Revisa RevenueCat y App Store Connect.' };
     }
 
@@ -277,33 +291,41 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         setSimulatedPremiumAccess(true);
         await persistPremiumFlag(user.id, true);
         await persistSubscriptionState(user.id, info, plan);
-      if (isAnnualTrialPurchase(plan)) {
-        const trialDays = resolveTrialDaysFromProduct(selectedPackage);
-        const entitlement = info.entitlements.active[ENTITLEMENT_ID];
-        const trialEnd =
-          entitlement?.periodType === 'TRIAL' && entitlement.expirationDate
-            ? new Date(entitlement.expirationDate)
-            : annualTrialEndDate(undefined, trialDays);
-        await scheduleTrialReminderNotification(trialEnd);
-      }
+        if (isAnnualTrialPurchase(plan)) {
+          const trialDays = resolveTrialDaysFromProduct(selectedPackage);
+          const entitlement = info.entitlements.active[ENTITLEMENT_ID];
+          const trialEnd =
+            entitlement?.periodType === 'TRIAL' && entitlement.expirationDate
+              ? new Date(entitlement.expirationDate)
+              : annualTrialEndDate(undefined, trialDays);
+          await scheduleTrialReminderNotification(trialEnd);
+        }
+        trackEvent('purchase_success', { plan });
       } else {
         await persistSubscriptionState(user.id, info);
+        trackEvent('purchase_failed', { plan, error: 'Entitlement not active after payment' });
       }
       return {
         success: premium,
         error: premium ? null : 'No se pudo activar el acceso premium.',
       };
     } catch (err: any) {
-      if (err?.userCancelled) return { success: false, error: null };
+      if (err?.userCancelled) {
+        trackEvent('purchase_cancelled', { plan });
+        return { success: false, error: null };
+      }
       const message = err?.message ?? 'No se pudo completar la compra.';
       setError(message);
+      trackEvent('purchase_failed', { plan, error: message });
       return { success: false, error: message };
     }
-  }, [configured, packages, persistPremiumFlag, persistSubscriptionState, user?.id]);
+  }, [configured, error, packages, persistPremiumFlag, persistSubscriptionState, refreshDbSubscription, user?.id]);
 
   const restorePurchases = useCallback(async () => {
     if (!user?.id) return { success: false, error: 'Inicia sesión para restaurar.' };
     if (!configured) return { success: false, error: error ?? 'RevenueCat no está configurado.' };
+
+    trackEvent('restore_initiated');
 
     try {
       setError(null);
@@ -315,10 +337,12 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         await persistPremiumFlag(user.id, true);
       }
       await persistSubscriptionState(user.id, info);
+      trackEvent('restore_success', { hasPremium: premium });
       return { success: premium, error: premium ? null : 'No encontramos una compra activa.' };
     } catch (err: any) {
       const message = err?.message ?? 'No se pudo restaurar la compra.';
       setError(message);
+      trackEvent('restore_failed', { error: message });
       return { success: false, error: message };
     }
   }, [configured, error, persistPremiumFlag, persistSubscriptionState, user?.id]);

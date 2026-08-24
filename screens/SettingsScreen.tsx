@@ -560,8 +560,8 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
           last
         />
 
-        {/* DEVELOPER */}
-        {__DEV__ && (
+        {/* DEVELOPER — solo builds de desarrollo, nunca en App Store */}
+        {__DEV__ ? (
           <>
             <View style={styles.pad}>
               <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>{t('settingsScreen.developer')}</Text>
@@ -597,10 +597,51 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
                   Alert.alert('Error', e.message);
                 }
               }}
+            />
+            <SettingsRow
+              icon="play"
+              title="Probar pantalla alarma (Directo)"
+              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
+              onPress={async () => {
+                const { data: alarms } = await supabase.from('alarms').select('*').eq('user_id', user?.id).limit(1);
+                const testAlarm = alarms?.[0]
+                  ? { id: alarms[0].id, time: alarms[0].time, ampm: alarms[0].ampm, mission: alarms[0].mission, label: alarms[0].label || 'Test', on: true, missionMode: alarms[0].mission_mode, enabledMissions: alarms[0].enabled_missions, sound: alarms[0].sound }
+                  : { id: 999, time: '7:00', ampm: 'AM' as const, mission: 'water', label: 'Test', on: true };
+                navigation.navigate('AlarmMission', { isDaily: true, alarm: testAlarm });
+              }}
+            />
+            <SettingsRow
+              icon="bell"
+              title="Simular alarma (10 seg)"
+              control={<Icon name="chevR" size={16} color={colors.textFaint} />}
+              onPress={async () => {
+                const permissionGranted = await require('../lib/alarmScheduler').ensureNotificationPermissions();
+                if (!permissionGranted) {
+                  Alert.alert('Error', 'No hay permisos de notificaciones');
+                  return;
+                }
+                const { data: alarms } = await supabase.from('alarms').select('*').eq('user_id', user?.id).limit(1);
+                const testAlarmId = alarms && alarms.length > 0 ? alarms[0].id : 1;
+                
+                await require('expo-notifications').scheduleNotificationAsync({
+                  content: {
+                    title: 'Roo Alarm (Test)',
+                    body: '¡Es la hora de tu alarma de prueba!',
+                    sound: 'digital_alarm.mp3',
+                    data: { alarmId: testAlarmId, source: 'rooalarm' },
+                    interruptionLevel: 'timeSensitive',
+                  },
+                  trigger: {
+                    type: require('expo-notifications').SchedulableTriggerInputTypes.TIME_INTERVAL,
+                    seconds: 10,
+                  },
+                });
+                Alert.alert('Programada', 'Bloquea la pantalla, sonará en 10 segundos.');
+              }}
               last
             />
           </>
-        )}
+        ) : null}
 
 
 

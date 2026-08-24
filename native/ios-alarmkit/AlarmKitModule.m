@@ -53,6 +53,12 @@ RCT_EXTERN_METHOD(triggerSimulationNow:(NSString *)title
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(scheduleMissionWatchdog:(NSString *)alarmId
+                  title:(NSString *)title
+                  delaySeconds:(nonnull NSNumber *)delaySeconds
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 RCT_EXTERN_METHOD(syncWidgetStreak:(nonnull NSNumber *)streak
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)

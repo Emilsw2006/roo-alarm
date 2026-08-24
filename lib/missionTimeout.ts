@@ -5,6 +5,7 @@ import { retriggerManagedAlarm } from './alarmScheduler';
 import { resetToHome } from './alarmNavigation';
 import { markAlarmRetriggerPending } from './retriggerGuard';
 import { supabase } from './supabase';
+import { trackEvent } from './analytics';
 
 const MISSION_ACTIVE_ROUTES = new Set(['AlarmMission', 'Camera', 'Success', 'Fail']);
 
@@ -39,10 +40,23 @@ export async function onMissionTimerExpired(
   userId?: string | null,
   rescueTokens = 0,
 ): Promise<'rescue' | 'done'> {
-  await scheduleMissionTimeoutRetrigger(params.alarm, userId);
+  if (params.alarm?.id) {
+    trackEvent('alarm_mission_timeout', {
+      alarmId: params.alarm.id,
+      missionType: params.alarm.mission,
+      isDaily: params.isDaily,
+      hasRescueTokens: rescueTokens > 0,
+      rescueTokensAvailable: rescueTokens,
+    });
+  }
+
+  // Si hay tokens de rescate, NO retriggerar todavía: el usuario decide primero.
+  // Si rechaza el token, finishMissionTimeout se encarga de retriggerar.
   if (shouldOfferRescueOnTimeout(params.isDaily, rescueTokens)) {
     return 'rescue';
   }
+
+  await scheduleMissionTimeoutRetrigger(params.alarm, userId);
   return 'done';
 }
 

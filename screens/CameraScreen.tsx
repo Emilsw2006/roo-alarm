@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity, Animated, Image, Dimensions, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions, CameraType } from 'expo-camera';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '../constants/ThemeContext';
 import { useLanguage } from '../constants/LanguageContext';
@@ -14,7 +16,7 @@ import { supabase } from '../lib/supabase';
 import { finishMissionTimeout, onMissionTimerExpired } from '../lib/missionTimeout';
 import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
 import { useAuth } from '../constants/AuthContext';
-import { isAiMissionVerifyEnabled } from '../lib/geminiConfig';
+import { isGeminiMissionVerifyEnabled } from '../lib/geminiConfig';
 import { verifyMissionPhoto } from '../lib/verifyMissionPhoto';
 
 interface CameraScreenProps {
@@ -43,6 +45,7 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
   const { user } = useAuth();
   const { t, missionCopy } = useLanguage();
   const [phase, setPhase] = useState<'frame' | 'analyzing' | 'success' | 'incorrect'>('frame');
+  const [isCapturing, setIsCapturing] = useState(false);
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scanAnim = useRef(new Animated.Value(0)).current;
@@ -112,7 +115,9 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
       }
       setTimeLeft(next);
       if (next === 0) {
-        if (phaseRef.current === 'success') return;
+        if (phaseRef.current === 'success' || phaseRef.current === 'analyzing') {
+          return;
+        }
         clearInterval(interval);
         triggerTimeoutFlow();
       }
@@ -159,30 +164,21 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
   }, [phase]);
 
   const handleCapture = async () => {
-    if (timeLeft <= 0) {
-      triggerTimeoutFlow();
+    if (isCapturing || timeLeft <= 0) {
+      if (timeLeft <= 0) triggerTimeoutFlow();
       return;
     }
+    setIsCapturing(true);
 
     let photoUri: string | null = null;
     let photoBase64: string | null = null;
-
-    try {
-      const photo = await cameraRef.current?.takePictureAsync({
-        quality: 0.8,
-        skipProcessing: true,
-        base64: true,
-      });
-      photoUri = photo?.uri ?? null;
-      photoBase64 = photo?.base64 ?? null;
-      if (photoUri) setCapturedUri(photoUri);
-    } catch (e) {
-      console.log('Capture error', e);
-    }
-
-    setPhase('analyzing');
+    let finished = false;
 
     const finishWithResult = (willPass: boolean) => {
+      if (finished) return;
+      finished = true;
+      setIsCapturing(false);
+
       const nextFailCount = failCount + 1;
 
       if (!willPass && missionExpiresAt && Date.now() >= missionExpiresAt) {
@@ -214,31 +210,75 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
       }
     };
 
-    if (isAiMissionVerifyEnabled() && photoBase64) {
-      try {
-        const copy = missionCopy(mission.id);
-        const result = await verifyMissionPhoto({
-          missionId: mission.id,
-          missionLabel: copy.label,
-          missionHint: copy.hint,
-          missionEmoji: mission.emoji,
-          imageBase64: photoBase64,
-        });
-
-        if (result.unavailable) {
-          console.log('Gemini unavailable, using fallback verify', result.reason);
-        } else {
-          finishWithResult(result.passed);
-          return;
+    try {
+      const photo = await cameraRef.current?.takePictureAsync({
+        quality: 0.55,
+        base64: false, // We'll compress it first
+      });
+      photoUri = photo?.uri ?? null;
+      if (photoUri) {
+        try {
+          const resized = await ImageManipulator.manipulateAsync(
+            photoUri,
+            [{ resize: { width: 800 } }],
+            { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+          );
+          photoBase64 = resized.base64 ?? null;
+        } catch (manipulatorError) {
+          console.log('Failed to compress photo', manipulatorError);
+          // Fallback to reading the uncompressed file
+          photoBase64 = await FileSystem.readAsStringAsync(photoUri, {
+            encoding: 'base64',
+          });
         }
-      } catch (error) {
-        console.log('Gemini mission verify error', error);
+        setCapturedUri(photoUri);
       }
+    } catch (e) {
+      console.log('Capture error', e);
     }
 
-    setTimeout(() => {
+    setPhase('analyzing');
+
+    const analyzeWatchdog = setTimeout(() => {
+      console.log('Camera analyze watchdog — verification timed out, auto-passing as fallback');
       finishWithResult(true);
-    }, 2200);
+    }, 16_000);
+
+    try {
+      if (!photoBase64) {
+        console.log('Camera capture missing base64');
+        finishWithResult(false);
+        return;
+      }
+
+      if (!isGeminiMissionVerifyEnabled()) {
+        console.log('Gemini mission verify disabled');
+        finishWithResult(false);
+        return;
+      }
+
+      const copy = missionCopy(mission.id);
+      const result = await verifyMissionPhoto({
+        missionId: mission.id,
+        missionLabel: copy.label,
+        missionHint: copy.hint,
+        missionEmoji: mission.emoji,
+        imageBase64: photoBase64,
+      });
+
+      if (result.unavailable) {
+        console.log('Mission verify unavailable (offline/error), auto-passing as fallback', result.reason);
+        finishWithResult(true);
+        return;
+      }
+
+      finishWithResult(result.passed);
+    } catch (error) {
+      console.log('Gemini mission verify error, auto-passing as fallback', error);
+      finishWithResult(true);
+    } finally {
+      clearTimeout(analyzeWatchdog);
+    }
   };
 
   const handleUseToken = async () => {
@@ -385,8 +425,8 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.shutterOuter, phase !== 'frame' && styles.shutterDisabled]}
-          onPress={phase === 'frame' ? handleCapture : undefined}
+          style={[styles.shutterOuter, (phase !== 'frame' || isCapturing) && styles.shutterDisabled]}
+          onPress={phase === 'frame' && !isCapturing ? handleCapture : undefined}
           activeOpacity={0.86}
         >
           <View style={styles.shutterInner} />

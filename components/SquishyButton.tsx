@@ -6,7 +6,7 @@ import * as Haptics from 'expo-haptics';
 
 interface SquishyButtonProps {
   title?: string;
-  onPress: () => void;
+  onPress?: () => void | Promise<void>;
   color?: string;
   textColor?: string;
   style?: StyleProp<ViewStyle>;

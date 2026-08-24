@@ -10,7 +10,7 @@ import Icon from '../components/Icon';
 import * as Haptics from 'expo-haptics';
 import { configurePlaybackAudio, createRooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
 import { resetToHome } from '../lib/alarmNavigation';
-import { finalizeAlarmSuccess, wasAlarmCompletedToday } from '../lib/finalizeAlarmSuccess';
+import { wasAlarmCompletedToday } from '../lib/finalizeAlarmSuccess';
 import { useAuth } from '../constants/AuthContext';
 import { Alarm } from '../constants/data';
 
@@ -49,10 +49,6 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
   const plusOneTranslateY = useRef(new Animated.Value(20)).current;
 
   useEffect(() => {
-    void finalizeAlarmSuccess(alarm, user?.id);
-  }, [alarm?.id, user?.id]);
-
-  useEffect(() => {
     if (!showStreakAnimation) {
       Animated.timing(btnFade, { toValue: 1, duration: 400, useNativeDriver: true }).start();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -80,7 +76,7 @@ export default function SuccessScreen({ navigation, route }: SuccessScreenProps)
     const playSuccessSound = async () => {
       try {
         await configurePlaybackAudio(false);
-        const sound = createRooAudioPlayer({ uri: 'https://actions.google.com/sounds/v1/cartoon/magic_chime.ogg' });
+        const sound = createRooAudioPlayer(require('../assets/sounds/roulette_finish.wav'), { volume: 0.7 });
         sound.play();
         setTimeout(() => stopRooAudioPlayer(sound), 3000);
       } catch (e) {
