@@ -413,14 +413,6 @@ export default function EditSheet({
                 accentColor={colors.accSolid}
               />
             </View>
-            <AmPmToggle
-              value={ampm}
-              onChange={setAmpm}
-              accentColor={colors.accSolid}
-              textColor={colors.text}
-              morningHint={isDaily ? t('sheets.periodMorning') : undefined}
-              afternoonHint={isDaily ? t('sheets.periodAfternoon') : undefined}
-            />
           </View>
         </View>
       );

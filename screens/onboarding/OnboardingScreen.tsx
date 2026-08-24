@@ -17,7 +17,7 @@ const premiumFlagKey = (userId: string) => `rooalarm.premium.${userId}`;
 
 export default function OnboardingScreen({ navigation, route }: { navigation: any; route?: any }) {
   const { colors } = useColors();
-  const { hasPremiumAccess, grantDevScreenshotAccess } = useSubscription();
+  const { hasPremiumAccess } = useSubscription();
   const { session, signOut } = useAuth();
   const { resetData } = useOnboarding();
   const initialStep = Math.min(route?.params?.initialStep ?? FIRST_ONBOARDING_STEP, ONBOARDING_STEPS.length - 1);

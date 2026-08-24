@@ -36,6 +36,32 @@ const normalizeProtectedDays = (days: unknown) => {
   return normalized.length > 0 ? normalized : ALL_WEEK_DAYS;
 };
 
+let globalPendingAlarmId: number | null = null;
+let globalPendingSimulation = false;
+
+// Listener de notificaciones registrado UNA SOLA VEZ a nivel de módulo, fuera
+// del hook, para que NUNCA se pierda un tap aunque React no haya montado nada.
+let _globalListenerInstalled = false;
+const _ensureGlobalListener = () => {
+  if (_globalListenerInstalled) return;
+  _globalListenerInstalled = true;
+  Notifications.addNotificationResponseReceivedListener((response) => {
+    const data = response.notification.request.content.data;
+    console.log('[RooAlarm] GLOBAL tap captured:', JSON.stringify(data));
+    if (data?.source === 'simulation') {
+      globalPendingSimulation = true;
+      globalPendingAlarmId = null;
+      return;
+    }
+    const alarmId = Number(data?.alarmId);
+    if (Number.isFinite(alarmId) && alarmId > 0) {
+      globalPendingAlarmId = alarmId;
+      globalPendingSimulation = false;
+    }
+  });
+};
+_ensureGlobalListener();
+
 export function useGlobalAlarmTrigger(
   navigationRef: NavigationContainerRef<any>,
   userId: string | null | undefined,
@@ -152,18 +178,9 @@ export function useGlobalAlarmTrigger(
     const todayStr = now.toISOString().split('T')[0];
     if (due.lastCompletedDate === todayStr || wasAlarmCompletedToday(due.id)) return;
 
-    // Eliminamos el early return en iOS. Si AlarmKit sonó y el usuario pulsó el
-    // cuerpo de la notificación (sin ejecutar el Intent), o simplemente abrió la
-    // app un poco después, tenemos que forzar la misión.
-    // openAlarmForRecord en iOS navega directamente a AlarmMission.
-
     void openAlarmForRecord(due);
   }, [enabled, markAlarmTriggered, openAlarmForRecord, userId]);
 
-  /**
-   * Tras deslizar "Posponer", el intent nativo abre la app y deja un marcador. Aquí lo
-   * leemos y volvemos a sonar la alarma COMPLETA (no notificación) con el camino fiable.
-   */
   const flushSlideRetrigger = useCallback(async () => {
     if (Platform.OS !== 'ios' || !alarmKitActiveRef.current) return;
     const pendingId = await consumePendingDismissRetrigger();
@@ -180,17 +197,62 @@ export function useGlobalAlarmTrigger(
     const todayStr = new Date().toISOString().split('T')[0];
     if (alarm.lastCompletedDate === todayStr || wasAlarmCompletedToday(pendingId)) return;
 
-    // Cancela el re-disparo nativo pendiente para no sonar dos veces.
     await cancelDismissRetrigger(pendingId);
     await markAlarmTriggered(alarm, todayStr);
     markAlarmRetriggerPending(pendingId);
     await retriggerManagedAlarm(alarm, { immediate: true });
   }, [markAlarmTriggered, refreshAlarmData]);
 
+
   useEffect(() => {
     if (!enabled || !userId) return;
 
-    void refreshAlarmData().then(() => flushSlideRetrigger());
+    void (async () => {
+      // 1. Primero intentamos obtener el tap de lanzamiento mediante la API
+      //    oficial de Expo para cold-start (más fiable que el listener de módulo).
+      try {
+        const lastResponse = await Notifications.getLastNotificationResponseAsync();
+        if (lastResponse) {
+          const data = lastResponse.notification.request.content.data;
+          const isRecent = Date.now() - lastResponse.notification.date < 60_000; // solo si es reciente (< 1 min)
+          if (isRecent) {
+            if (data?.source === 'simulation') {
+              globalPendingSimulation = true;
+              globalPendingAlarmId = null;
+            } else {
+              const alarmId = Number(data?.alarmId);
+              if (Number.isFinite(alarmId) && alarmId > 0) {
+                globalPendingAlarmId = alarmId;
+                globalPendingSimulation = false;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[RooAlarm] getLastNotificationResponseAsync error', e);
+      }
+
+      await refreshAlarmData();
+      await flushSlideRetrigger();
+
+      // 2. Consumir tap pendiente (del listener global o del getLastNotificationResponseAsync)
+      if (globalPendingSimulation) {
+        globalPendingSimulation = false;
+        console.log('[RooAlarm] Consuming pending simulation tap on mount');
+        void openSimulation();
+      } else if (globalPendingAlarmId !== null) {
+        const pendingId = globalPendingAlarmId;
+        globalPendingAlarmId = null;
+        console.log('[RooAlarm] Consuming pending alarm tap on mount:', pendingId);
+        void openAlarmById(pendingId);
+      }
+    })();
+
+    const { subscribeToAlarmChanges } = require('../lib/alarmScheduler');
+    const unsubscribeAlarms = subscribeToAlarmChanges(() => {
+      console.log('[RooAlarm] Local alarm change detected in hook, refreshing data');
+      void refreshAlarmData();
+    });
 
     const refreshInterval = setInterval(() => {
       void refreshAlarmData();
@@ -198,7 +260,6 @@ export function useGlobalAlarmTrigger(
 
     const tickInterval = setInterval(checkDueAlarms, 1000);
 
-    // Reintenta leer el marcador del deslizar por si el intent nativo lo escribe con retraso.
     const slideFlushInterval = setInterval(() => {
       void flushSlideRetrigger();
     }, 800);
@@ -224,25 +285,13 @@ export function useGlobalAlarmTrigger(
       }
     });
 
-    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data;
-      if (data?.source === 'simulation') {
-        void openSimulation();
-        return;
-      }
-      const alarmId = Number(data?.alarmId);
-      if (Number.isFinite(alarmId) && alarmId > 0) {
-        void openAlarmById(alarmId);
-      }
-    });
-
     return () => {
+      unsubscribeAlarms();
       clearInterval(refreshInterval);
       clearInterval(tickInterval);
       clearInterval(slideFlushInterval);
       appStateSub.remove();
       receivedSub.remove();
-      responseSub.remove();
     };
   }, [checkDueAlarms, enabled, flushSlideRetrigger, openAlarmById, openSimulation, refreshAlarmData, userId]);
 }

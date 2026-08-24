@@ -71,13 +71,16 @@ export async function resolvePostAuthDestination(
     return POST_PAY_PROFILE_STEP;
   }
 
-  // Cuenta ya creada: nunca volver al cuestionario inicial.
+  // Cuenta existente con plan → paywall. Sin plan → cuestionario.
   if (existingAccount) {
-    return PAYWALL_START_STEP;
+    if (profileComplete) {
+      return PAYWALL_START_STEP;
+    }
+    return FIRST_ONBOARDING_STEP;
   }
 
   if (!profileComplete) {
-    if (fromOnboarding) {
+    if (fromOnboarding || resumePaywall) {
       return CHART_STEP;
     }
     return FIRST_ONBOARDING_STEP;
@@ -114,8 +117,8 @@ export function resolveAuthEntryForSession(
     return { route: 'Onboarding', step: PAYWALL_START_STEP };
   }
 
-  // Sesión a medias (p. ej. OAuth durante onboarding) → continuar paywall, no desde cero.
-  return { route: 'Onboarding', step: PAYWALL_START_STEP };
+  // Sesión sin plan completo → retomar cuestionario (no paywall vacío).
+  return { route: 'Onboarding', step: FIRST_ONBOARDING_STEP };
 }
 
 export { PAYWALL_START_STEP };

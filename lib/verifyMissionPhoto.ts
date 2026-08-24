@@ -1,13 +1,9 @@
+import { verifyMissionPhotoClient } from './verifyMissionPhotoClient';
 import { supabase } from './supabase';
+import { withTimeout } from './withTimeout';
+import type { MissionPhotoVerifyInput, MissionPhotoVerifyResult } from './missionPhotoVerifyShared';
 
-type VerifyMissionPhotoInput = {
-  missionId: string;
-  missionLabel: string;
-  missionHint: string;
-  missionEmoji?: string;
-  imageBase64: string;
-  mimeType?: string;
-};
+export type VerifyMissionPhotoInput = MissionPhotoVerifyInput;
 
 export type VerifyMissionPhotoReason =
   | 'missing_api_key'
@@ -18,55 +14,78 @@ export type VerifyMissionPhotoReason =
   | 'invalid_response'
   | 'rejected';
 
-export type VerifyMissionPhotoResult = {
-  passed: boolean;
-  /** True when the verifier could not run — not a user photo failure. */
-  unavailable?: boolean;
-  reason?: VerifyMissionPhotoReason | string;
-};
+export type VerifyMissionPhotoResult = MissionPhotoVerifyResult;
+
+const VERIFY_TIMEOUT_MS = 8_000;
+
+const unavailable = (reason: VerifyMissionPhotoReason): VerifyMissionPhotoResult => ({
+  passed: false,
+  unavailable: true,
+  reason,
+});
+
+async function verifyMissionPhotoViaEdge(
+  input: VerifyMissionPhotoInput
+): Promise<VerifyMissionPhotoResult> {
+  const invokePromise = supabase.functions
+    .invoke<VerifyMissionPhotoResult>('verify-mission-photo', {
+      body: {
+        missionId: input.missionId,
+        missionLabel: input.missionLabel,
+        missionHint: input.missionHint,
+        missionEmoji: input.missionEmoji,
+        imageBase64: input.imageBase64,
+        mimeType: input.mimeType ?? 'image/jpeg',
+      },
+    })
+    .then(({ data, error }) => {
+      if (data && typeof data.passed === 'boolean') {
+        if (data.unavailable) {
+          console.log('verify-mission-photo unavailable', data.reason);
+        } else if (!data.passed) {
+          console.log('verify-mission-photo rejected', data.reason);
+        }
+        return data;
+      }
+
+      if (error) {
+        console.log('verify-mission-photo invoke failed', error);
+        return unavailable('api_error');
+      }
+
+      console.log('verify-mission-photo invalid payload', data);
+      return unavailable('invalid_response');
+    })
+    .catch((err) => {
+      console.log('verify-mission-photo network error', err);
+      return unavailable('api_error');
+    });
+
+  const result = await withTimeout(
+    invokePromise,
+    VERIFY_TIMEOUT_MS,
+    unavailable('timeout')
+  );
+
+  if (result.reason === 'timeout') {
+    console.log('verify-mission-photo timed out after', VERIFY_TIMEOUT_MS, 'ms');
+  }
+
+  return result;
+}
 
 /**
- * La verificación vive en la Edge Function `verify-mission-photo`. La clave de
- * Gemini es un secreto del proyecto Supabase y nunca se compila dentro de la app:
- * cualquier clave incluida en el bundle es extraíble del IPA.
+ * Primero intenta la Edge Function (clave en Supabase). Si el servidor no puede
+ * verificar, usa Gemini directamente con la clave de desarrollo en la app.
  */
 export async function verifyMissionPhoto(
   input: VerifyMissionPhotoInput
 ): Promise<VerifyMissionPhotoResult> {
-  try {
-    const { data, error } = await supabase.functions.invoke<VerifyMissionPhotoResult>(
-      'verify-mission-photo',
-      {
-        body: {
-          missionId: input.missionId,
-          missionLabel: input.missionLabel,
-          missionHint: input.missionHint,
-          missionEmoji: input.missionEmoji,
-          imageBase64: input.imageBase64,
-          mimeType: input.mimeType ?? 'image/jpeg',
-        },
-      }
-    );
-
-    if (error) {
-      console.log('verify-mission-photo invoke failed', error);
-      return { passed: false, unavailable: true, reason: 'api_error' };
-    }
-
-    if (!data || typeof data.passed !== 'boolean') {
-      console.log('verify-mission-photo invalid payload', data);
-      return { passed: false, unavailable: true, reason: 'invalid_response' };
-    }
-
-    if (data.unavailable) {
-      console.log('verify-mission-photo unavailable', data.reason);
-    } else if (!data.passed) {
-      console.log('verify-mission-photo rejected', data.reason);
-    }
-
-    return data;
-  } catch (err) {
-    console.log('verify-mission-photo network error', err);
-    return { passed: false, unavailable: true, reason: 'api_error' };
+  const edgeResult = await verifyMissionPhotoViaEdge(input);
+  if (!edgeResult.unavailable) {
+    return edgeResult;
   }
+
+  console.log('verify-mission-photo edge unavailable, trying client Gemini', edgeResult.reason);
+  return verifyMissionPhotoClient(input);
 }

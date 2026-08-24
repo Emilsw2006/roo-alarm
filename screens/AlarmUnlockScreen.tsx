@@ -44,6 +44,15 @@ export default function AlarmUnlockScreen({ navigation, route }: AlarmUnlockScre
 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
+
+    if (alarm) {
+      // Si ya tenemos el objeto de la alarma, navegamos de inmediato para evitar el pantallazo en negro
+      navigation.replace('AlarmMission', { isDaily, alarm, fromAlarmKit: true });
+      // Consumimos el pending de AlarmKit en segundo plano para limpiar la cola nativa
+      void tryOpenPendingAlarmFlow(navigationRef, user?.id);
+      return;
+    }
+
     void (async () => {
       const opened = await tryOpenPendingAlarmFlow(navigationRef, user?.id);
       if (!opened) {
@@ -97,7 +106,7 @@ export default function AlarmUnlockScreen({ navigation, route }: AlarmUnlockScre
     Vibration.cancel();
     stopRooAudioPlayer(soundRef.current);
     soundRef.current = null;
-    navigation.navigate('AlarmMission', { isDaily, alarm });
+    navigation.replace('AlarmMission', { isDaily, alarm });
   };
 
   if (Platform.OS === 'ios') {

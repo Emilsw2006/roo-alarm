@@ -26,6 +26,7 @@ export async function openAlarmFlowFromPendingId(
       'pendingId=',
       pendingId
     );
+    void clearPendingAlarmLaunch();
     return false;
   }
 
@@ -52,19 +53,14 @@ export async function openAlarmFlowFromPendingId(
     return false;
   }
 
-  const { data: alarms, error: fetchError } = await supabase
+  const { data: alarmRow, error: fetchError } = await supabase
     .from('alarms')
     .select('*')
-    .eq('user_id', userId)
-    .order('id', { ascending: true });
+    .eq('id', alarmId)
+    .single();
 
-  if (fetchError) {
-    console.log('[RooAlarm] openAlarmFlow: fetch alarms error', fetchError.message, 'alarmId=', alarmId);
-  }
-
-  const alarmRow = alarms?.find((row) => Number(row.id) === alarmId);
-  if (!alarmRow) {
-    console.log('[RooAlarm] openAlarmFlow: alarm row NOT FOUND for id', alarmId, 'fetched count=', alarms?.length);
+  if (fetchError || !alarmRow) {
+    console.log('[RooAlarm] openAlarmFlow: fetch alarm error or NOT FOUND', fetchError?.message, 'alarmId=', alarmId);
     return false;
   }
 
@@ -77,7 +73,7 @@ export async function openAlarmFlowFromPendingId(
   }
   const isDaily = !alarm.specificDate;
 
-  await markAlarmTriggeredToday(alarm.id, userId);
+  void markAlarmTriggeredToday(alarm.id, userId);
 
   const opened = navigateToAlarmMission(navigationRef, { isDaily, alarm, fromAlarmKit: true });
   console.log('[RooAlarm] openAlarmFlow: navigateToAlarmMission result=', opened, 'alarmId=', alarmId, 'isDaily=', isDaily);

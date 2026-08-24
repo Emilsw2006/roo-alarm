@@ -171,14 +171,36 @@ export const resetToHome = (
   );
 };
 
+export const runWhenNavigationReady = (
+  navigationRef: NavigationContainerRef<any>,
+  action: () => void
+) => {
+  if (navigationRef.isReady()) {
+    action();
+  } else {
+    let count = 0;
+    const interval = setInterval(() => {
+      count++;
+      if (navigationRef.isReady()) {
+        clearInterval(interval);
+        action();
+      } else if (count > 60) {
+        clearInterval(interval);
+        console.warn('[RooAlarm] Navigation container not ready after 3s');
+      }
+    }, 50);
+  }
+};
+
 export const navigateToAlarmUnlock = (
   navigationRef: NavigationContainerRef<any>,
   params: { isDaily: boolean; alarm?: Alarm }
 ) => {
-  if (!navigationRef.isReady()) return false;
-  if (isOnAlarmFlowScreen(navigationRef)) return false;
-  if (Platform.OS === 'ios') return false;
-  navigationRef.navigate('AlarmUnlock', params);
+  runWhenNavigationReady(navigationRef, () => {
+    if (isOnAlarmFlowScreen(navigationRef)) return;
+    if (Platform.OS === 'ios') return;
+    navigationRef.navigate('AlarmUnlock', params);
+  });
   return true;
 };
 
@@ -186,33 +208,34 @@ export const navigateToAlarmMission = (
   navigationRef: NavigationContainerRef<any>,
   params: { isDaily: boolean; alarm?: Alarm; fromAlarmKit?: boolean }
 ) => {
-  if (!navigationRef.isReady()) return false;
-  const routeName = navigationRef.getCurrentRoute()?.name;
-  if (routeName === 'AlarmMission' || routeName === 'Camera') {
-    console.log('[RooAlarm] navigateToAlarmMission: already on', routeName, '- skipping navigation');
-    return false;
-  }
+  runWhenNavigationReady(navigationRef, () => {
+    const routeName = navigationRef.getCurrentRoute()?.name;
+    if (routeName === 'AlarmMission' || routeName === 'Camera') {
+      console.log('[RooAlarm] navigateToAlarmMission: already on', routeName, '- skipping navigation');
+      return;
+    }
 
-  if (params.fromAlarmKit) {
-    navigationRef.dispatch(
-      CommonActions.reset({
-        index: 0,
-        routes: [{ name: 'AlarmMission', params }],
-      })
-    );
-    return true;
-  }
+    if (params.fromAlarmKit) {
+      navigationRef.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [{ name: 'AlarmMission', params }],
+        })
+      );
+      return;
+    }
 
-  if (Platform.OS === 'ios') {
-    navigationRef.dispatch(
-      CommonActions.reset({
-        index: 0,
-        routes: [{ name: 'AlarmMission', params }],
-      })
-    );
-    return true;
-  }
+    if (Platform.OS === 'ios') {
+      navigationRef.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [{ name: 'AlarmMission', params }],
+        })
+      );
+      return;
+    }
 
-  navigationRef.navigate('AlarmMission', params);
+    navigationRef.navigate('AlarmMission', params);
+  });
   return true;
 };

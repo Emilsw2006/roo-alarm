@@ -37,14 +37,14 @@ export default function Switch({ on, onToggle }: SwitchProps) {
       style={[
         styles.track,
         {
-          backgroundColor: on ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.08)',
-          borderColor: on ? 'rgba(255,255,255,0.2)' : 'transparent',
+          backgroundColor: on ? colors.accSolid : 'rgba(0,0,0,0.08)',
+          borderColor: on ? colors.accSolid : 'transparent',
           borderWidth: 1,
         },
       ]}
     >
       <Animated.View
-        style={[styles.thumb, { transform: [{ translateX }], backgroundColor: on ? colors.accSolid : '#fff' }]}
+        style={[styles.thumb, { transform: [{ translateX }], backgroundColor: '#fff' }]}
       />
     </TouchableOpacity>
   );

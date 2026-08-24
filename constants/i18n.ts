@@ -163,6 +163,8 @@ export const translations = {
     delete: 'Eliminar',
     off: 'Apagada',
     evolutionPath: 'Camino de evolución',
+    comingSoonTitle: 'MÁS POR VENIR...',
+    comingSoonSub: 'Nuevas ligas y recompensas en camino 🚀',
     searchSounds: 'Buscar sonidos...',
     typeCustomMission: 'Escribe tu misión...',
     customMission: 'Misión personalizada',
@@ -413,7 +415,7 @@ export const translations = {
       periodMorning: 'Mañana', periodAfternoon: 'Tarde', saveFailedTitle: 'No se pudo guardar', saveFailedBody: 'Revisa la conexión e inténtalo otra vez.',
     },
     alarmFlow: {
-      alarm: 'ALARMA', slideToStop: 'Desliza para desbloquear', unlock: 'Desbloquear', choosingMission: 'Eligiendo misión...', missionComplete: '¡Misión completada!', streakCalendar: 'Calendario de racha', dayStreak: ' días de racha', startDay: 'Empezar mi día', missionFailed: 'Misión fallida', missionFailedBody: 'No completaste la misión a tiempo.', streakLost: 'RACHA PERDIDA', hapticFeedback: 'Respuesta háptica', tryTomorrow: 'Intentarlo mañana',
+      alarm: 'ALARMA', slideToStop: 'Desliza para desbloquear', unlock: 'Desbloquear', choosingMission: 'Eligiendo misión...', acceptMission: 'Aceptar misión', spinAgain: 'Cambiar misión', noMoreSpins: 'Sin más cambios', missionComplete: '¡Misión completada!', streakCalendar: 'Calendario de racha', dayStreak: ' días de racha', startDay: 'Empezar mi día', missionFailed: 'Misión fallida', missionFailedBody: 'No completaste la misión a tiempo.', streakLost: 'RACHA PERDIDA', hapticFeedback: 'Respuesta háptica', tryTomorrow: 'Intentarlo mañana',
     },
     camera: {
       permission: 'Necesitamos permiso para mostrar la cámara y validar la misión.', grant: 'Dar permiso', analyzing: 'Analizando foto...', valid: 'Misión validada', retry: 'Repite la foto', secondFail: 'Segundo intento fallido', failBody: 'La foto no ha pasado la validación dos veces. Puedes repetir o gastar un Rescue Token para guardar la racha de hoy.', timeoutTitle: 'Se acabó el tiempo', timeoutBody: 'No completaste la misión a tiempo. Puedes gastar un Rescue Token para guardar la racha de hoy o dejar que la alarma vuelva a sonar.', useToken: 'Usar token ({count})', repeatPhoto: 'Repetir foto', repeatAlarm: 'Repetir alarma',
@@ -458,6 +460,8 @@ export const translations = {
     delete: 'Delete',
     off: 'Off',
     evolutionPath: 'Evolution Path',
+    comingSoonTitle: 'COMING SOON...',
+    comingSoonSub: 'More leagues & rewards on their way 🚀',
     searchSounds: 'Search sounds...',
     typeCustomMission: 'Type your custom mission...',
     customMission: 'Custom Mission',
@@ -708,7 +712,7 @@ export const translations = {
       periodMorning: 'Morning', periodAfternoon: 'Afternoon', saveFailedTitle: 'Could not save', saveFailedBody: 'Check your connection and try again.',
     },
     alarmFlow: {
-      alarm: 'ALARM', slideToStop: 'Slide to unlock', unlock: 'Unlock', choosingMission: 'Choosing mission...', missionComplete: 'Mission Complete!', streakCalendar: 'Streak Calendar', dayStreak: ' day streak', startDay: 'Start my day', missionFailed: 'Mission failed', missionFailedBody: "You didn't complete the mission in time.", streakLost: 'STREAK LOST', hapticFeedback: 'Haptic feedback', tryTomorrow: 'Try again tomorrow',
+      alarm: 'ALARM', slideToStop: 'Slide to unlock', unlock: 'Unlock', choosingMission: 'Choosing mission...', acceptMission: 'Accept mission', spinAgain: 'Change mission', noMoreSpins: 'No more changes', missionComplete: 'Mission Complete!', streakCalendar: 'Streak Calendar', dayStreak: ' day streak', startDay: 'Start my day', missionFailed: 'Mission failed', missionFailedBody: "You didn't complete the mission in time.", streakLost: 'STREAK LOST', hapticFeedback: 'Haptic feedback', tryTomorrow: 'Try again tomorrow',
     },
     camera: {
       permission: 'We need your permission to show the camera to validate the mission.', grant: 'Grant Permission', analyzing: 'Analyzing photo...', valid: 'Mission validated', retry: 'Repeat the photo', secondFail: 'Second failed attempt', failBody: 'The photo did not pass validation twice. You can repeat it or spend a Rescue Token to save today’s streak.', timeoutTitle: 'Time is up', timeoutBody: 'You did not complete the mission in time. Spend a Rescue Token to save today’s streak or let the alarm ring again.', useToken: 'Use token ({count})', repeatPhoto: 'Repeat photo', repeatAlarm: 'Repeat alarm',
@@ -753,6 +757,8 @@ export const translations = {
     delete: 'Löschen',
     off: 'Aus',
     evolutionPath: 'Entwicklungspfad',
+    comingSoonTitle: 'BALD VERFÜGBAR...',
+    comingSoonSub: 'Weitere Ligen & Belohnungen sind auf dem Weg 🚀',
     searchSounds: 'Töne suchen...',
     typeCustomMission: 'Eigene Mission eingeben...',
     customMission: 'Eigene Mission',
@@ -1003,7 +1009,7 @@ export const translations = {
       periodMorning: 'Morgen', periodAfternoon: 'Nachmittag', saveFailedTitle: 'Speichern fehlgeschlagen', saveFailedBody: 'Prüfe deine Verbindung und versuche es erneut.',
     },
     alarmFlow: {
-      alarm: 'WECKER', slideToStop: 'Zum Entsperren wischen', unlock: 'Entsperren', choosingMission: 'Mission wird gewählt...', missionComplete: 'Mission geschafft!', streakCalendar: 'Serienkalender', dayStreak: ' Tage Serie', startDay: 'Meinen Tag starten', missionFailed: 'Mission fehlgeschlagen', missionFailedBody: 'Du hast die Mission nicht rechtzeitig abgeschlossen.', streakLost: 'SERIE VERLOREN', hapticFeedback: 'Haptisches Feedback', tryTomorrow: 'Morgen erneut versuchen',
+      alarm: 'WECKER', slideToStop: 'Zum Entsperren wischen', unlock: 'Entsperren', choosingMission: 'Mission wird gewählt...', acceptMission: 'Mission akzeptieren', spinAgain: 'Mission ändern', noMoreSpins: 'Keine Änderungen mehr', missionComplete: 'Mission geschafft!', streakCalendar: 'Serienkalender', dayStreak: ' Tage Serie', startDay: 'Meinen Tag starten', missionFailed: 'Mission fehlgeschlagen', missionFailedBody: 'Du hast die Mission nicht rechtzeitig abgeschlossen.', streakLost: 'SERIE VERLOREN', hapticFeedback: 'Haptisches Feedback', tryTomorrow: 'Morgen erneut versuchen',
     },
     camera: {
       permission: 'Wir brauchen deine Erlaubnis, um die Kamera für die Mission zu nutzen.', grant: 'Erlaubnis geben', analyzing: 'Foto wird analysiert...', valid: 'Mission bestätigt', retry: 'Foto wiederholen', secondFail: 'Zweiter Fehlversuch', failBody: 'Das Foto wurde zweimal nicht bestätigt. Wiederhole es oder nutze einen Rescue Token, um die heutige Serie zu retten.', timeoutTitle: 'Zeit abgelaufen', timeoutBody: 'Du hast die Mission nicht rechtzeitig abgeschlossen. Nutze einen Rescue Token, um die heutige Serie zu retten, oder lass den Wecker erneut klingeln.', useToken: 'Token nutzen ({count})', repeatPhoto: 'Foto wiederholen', repeatAlarm: 'Wecker wiederholen',

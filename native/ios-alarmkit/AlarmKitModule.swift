@@ -486,4 +486,31 @@ class AlarmKitModule: NSObject {
 #endif
     resolve(false)
   }
+
+  /// Programa una alarma nativa como red de seguridad durante la misión.
+  /// Si la app muere antes de que se cancele, la alarma volverá a sonar.
+  @objc
+  func scheduleMissionWatchdog(
+    _ alarmId: String,
+    title: String,
+    delaySeconds: NSNumber,
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+#if canImport(AlarmKit)
+    if #available(iOS 26.0, *) {
+      Task {
+        RooAlarmDismissRetrigger.storeTitle(title, for: alarmId)
+        let ok = await RooAlarmDismissRetrigger.schedule(
+          appAlarmId: alarmId,
+          delaySeconds: delaySeconds.intValue
+        )
+        NSLog("[RooAlarm] scheduleMissionWatchdog delay=%ds alarm=%@ ok=%@", delaySeconds.intValue, alarmId, ok ? "true" : "false")
+        resolve(ok)
+      }
+      return
+    }
+#endif
+    resolve(false)
+  }
 }

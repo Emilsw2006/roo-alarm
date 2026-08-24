@@ -5,6 +5,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { supabase } from '../lib/supabase';
 import { requestAuthNavigationRefresh } from '../lib/authNavigationRefresh';
+import { identifyUser, resetAnalytics } from '../lib/analytics';
 
 const AUTH_REDIRECT_URL = 'rooalarm://auth/callback';
 WebBrowser.maybeCompleteAuthSession();
@@ -123,6 +124,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+      if (session?.user) {
+        identifyUser(session.user.id, session.user.email);
+      } else {
+        resetAnalytics();
+      }
     });
 
     return () => {
