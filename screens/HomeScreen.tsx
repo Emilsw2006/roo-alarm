@@ -342,7 +342,7 @@ export default function HomeScreen({ navigation, route }: HomeScreenProps) {
     const daily = getDailyAlarm(alarmList);
 
     if (daily && isDailyAlarmLockedToday(daily)) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Selection);
+      Haptics.selectionAsync();
       // Removed early return to allow editing tomorrow's time
     }
 

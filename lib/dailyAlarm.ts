@@ -26,7 +26,9 @@ export const toDateOnlyIso = (value: Date) => {
 };
 
 export const parseDateOnlyIso = (iso: string) => {
+  if (!iso || iso === 'daily') return new Date();
   const [year, month, day] = iso.split('-').map(Number);
+  if (!year || !month || !day) return new Date();
   return new Date(year, month - 1, day);
 };
 

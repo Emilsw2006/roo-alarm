@@ -3,6 +3,7 @@ import { settleAlarmAfterCompletion } from './alarmScheduler';
 import { getTodayDateStr } from './dailyAlarm';
 import { clearAlarmRetriggerPending } from './retriggerGuard';
 import { supabase } from './supabase';
+import { stopPersistentAlarm } from './alarmPersistentGuard';
 
 const completedTodayIds = new Set<number>();
 
@@ -16,6 +17,7 @@ export function unmarkAlarmCompletedToday(alarmId: number) {
 
 /** Cancela re-disparos y marca la alarma como completada hoy (no debe volver a sonar). */
 export async function finalizeAlarmSuccess(alarm: Alarm | undefined, userId?: string | null) {
+  stopPersistentAlarm();
   if (!alarm?.id) return;
 
   completedTodayIds.add(alarm.id);

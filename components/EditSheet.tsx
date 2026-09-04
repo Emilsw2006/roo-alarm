@@ -12,6 +12,7 @@ import SquishyButton from './SquishyButton';
 import { Calendar } from 'react-native-calendars';
 import { useSwipeInteractive } from './useSwipeInteractive';
 import * as Haptics from 'expo-haptics';
+import Switch from './Switch';
 import { toDateOnlyIso, parseDateOnlyIso } from '../lib/dailyAlarm';
 
 interface EditSheetProps {
@@ -57,6 +58,9 @@ export default function EditSheet({
   const [expandedPicker, setExpandedPicker] = useState<'mission' | 'date' | null>(null);
   const [date, setDate] = useState<Date>(
     alarm.specificDate ? parseDateOnlyIso(alarm.specificDate) : new Date(),
+  );
+  const [isRepeatDaily, setIsRepeatDaily] = useState<boolean>(
+    isDaily ? true : (!isNew && alarm.specificDate === 'daily')
   );
   const [localProtectedDays, setLocalProtectedDays] = useState<number[]>(protectedDays);
   const [localMissionMode, setLocalMissionMode] = useState<MissionMode>(
@@ -106,7 +110,8 @@ export default function EditSheet({
       
       const [, m] = alarm.time.split(':');
       setMinute(m.padStart(2, '0'));
-      setDate(alarm.specificDate ? parseDateOnlyIso(alarm.specificDate) : new Date());
+      setDate(alarm.specificDate && alarm.specificDate !== 'daily' ? parseDateOnlyIso(alarm.specificDate) : new Date());
+      setIsRepeatDaily(isDaily ? true : (!isNew && alarm.specificDate === 'daily'));
       setExpandedPicker(null);
     }
     // Solo reinicia el estado al abrir la hoja o al cambiar de alarma. Depender de
@@ -122,13 +127,18 @@ export default function EditSheet({
     setIsSaving(true);
     try {
       const hourNum = parseInt(hour, 10);
-      const computedAmpm = hourNum >= 12 ? 'PM' : 'AM';
+      const computedAmpm: 'AM' | 'PM' = hourNum >= 12 ? 'PM' : 'AM';
       // Guardamos la hora en formato 24H directamente para que la UI la muestre en 24H
       const timeStr = `${hour}:${minute}`;
 
       const savedMission = localMissionMode === 'personalized'
         ? localPersonalizedMission
         : (localEnabledMissions[0] || DEFAULT_PERSONALIZED_MISSION);
+
+      const finalSpecificDate = isDaily
+        ? undefined
+        : (isRepeatDaily ? 'daily' : toDateOnlyIso(date));
+
       const payload = {
         ...alarm,
         time: timeStr,
@@ -139,7 +149,7 @@ export default function EditSheet({
         sound: alarm.sound || 'radar_classic',
         label: alarm.label || 'Wake up',
         customMission: localPersonalizedMission === 'custom' ? customMissionText : alarm.customMission,
-        specificDate: isDaily ? undefined : toDateOnlyIso(date),
+        specificDate: finalSpecificDate,
       };
 
       if (isDaily) {
@@ -159,7 +169,7 @@ export default function EditSheet({
         }
         await onSave({ ...payload, on: true });
       } else {
-        await onSave(payload);
+        await onSave({ ...payload, on: isNew ? true : (alarm.on ?? true) });
       }
       onClose();
     } catch (error: any) {
@@ -316,6 +326,49 @@ export default function EditSheet({
     );
   };
 
+  const renderDailyToggle = () => (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: colors.surface,
+        borderRadius: 16,
+        borderWidth: 1.5,
+        borderColor: isRepeatDaily ? colors.accSolid : colors.hairline2,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        marginBottom: 12,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, marginRight: 12 }}>
+        <View
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 12,
+            backgroundColor: isRepeatDaily ? (colors.brandOrange || colors.accSolid) : colors.surface2,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Icon name="sun" size={18} color={isRepeatDaily ? '#FFFFFF' : colors.textDim} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 15, fontFamily: FONT_FAMILY.bold, color: colors.text }}>
+            {t('sheets.dailyAlarm') || 'Alarma diaria'}
+          </Text>
+          <Text style={{ fontSize: 12, fontFamily: FONT_FAMILY.medium, color: colors.textFaint, marginTop: 2 }}>
+            {isRepeatDaily
+              ? 'Se activará cada día a esta hora'
+              : 'Elegir un día específico en el calendario'}
+          </Text>
+        </View>
+      </View>
+      <Switch on={isRepeatDaily} onToggle={() => setIsRepeatDaily((prev) => !prev)} />
+    </View>
+  );
+
   const renderDatePill = () => (
     <View style={{ marginBottom: 12 }}>
       <TouchableOpacity
@@ -413,14 +466,6 @@ export default function EditSheet({
                 accentColor={colors.accSolid}
               />
             </View>
-            <AmPmToggle
-              value={ampm}
-              onChange={setAmpm}
-              accentColor={colors.accSolid}
-              textColor={colors.text}
-              morningHint={isDaily ? t('sheets.periodMorning') : undefined}
-              afternoonHint={isDaily ? t('sheets.periodAfternoon') : undefined}
-            />
           </View>
         </View>
       );
@@ -429,7 +474,29 @@ export default function EditSheet({
     if (step === 2) {
       return (
         <View style={{ marginTop: 8, marginBottom: 20 }}>
-          {renderDatePill()}
+          {renderDailyToggle()}
+          {!isRepeatDaily && (
+            <View style={{ marginTop: 4 }}>
+              {renderDateCalendar()}
+            </View>
+          )}
+          {isRepeatDaily && (
+            <View
+              style={{
+                backgroundColor: colors.surface2,
+                borderRadius: 14,
+                padding: 16,
+                alignItems: 'center',
+                marginTop: 4,
+                borderWidth: 1,
+                borderColor: colors.hairline2,
+              }}
+            >
+              <Text style={{ fontSize: 13, fontFamily: FONT_FAMILY.semiBold, color: colors.textDim, textAlign: 'center' }}>
+                ⏰ Esta alarma sonará automáticamente a diario a las {hour}:{minute}
+              </Text>
+            </View>
+          )}
         </View>
       );
     }
@@ -551,7 +618,12 @@ export default function EditSheet({
               })}
             </View>
           )}
-          {!isDaily && renderDatePill()}
+          {!isDaily && (
+            <View style={{ marginBottom: 4 }}>
+              {renderDailyToggle()}
+              {!isRepeatDaily && renderDatePill()}
+            </View>
+          )}
           {renderSelectPill(
             'gear',
             t('mission'),

@@ -7,3 +7,6 @@
 export function isGeminiMissionVerifyEnabled() {
   return true;
 }
+
+export const isAiMissionVerifyEnabled = isGeminiMissionVerifyEnabled;
+

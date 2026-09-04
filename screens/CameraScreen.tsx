@@ -16,6 +16,7 @@ import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
 import { useAuth } from '../constants/AuthContext';
 import { isAiMissionVerifyEnabled } from '../lib/geminiConfig';
 import { verifyMissionPhoto } from '../lib/verifyMissionPhoto';
+import { stopPersistentAlarm } from '../lib/alarmPersistentGuard';
 
 interface CameraScreenProps {
   navigation: any;
@@ -267,6 +268,9 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
     setShowRescuePrompt(false);
     setRescueReason(null);
     if (wasTimeout) {
+      // Timeout: la alarma ya se re-programó; conservamos la referencia para
+      // reabrir la misión cuando vuelva a sonar (no la borramos hasta el éxito).
+      stopPersistentAlarm({ preserveActiveAlarm: true });
       timeoutHandledRef.current = true;
       void finishMissionTimeout(navigation, { isDaily, alarm }, user?.id, { skipRetrigger: true });
       return;

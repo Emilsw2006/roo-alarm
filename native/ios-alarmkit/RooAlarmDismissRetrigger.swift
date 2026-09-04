@@ -1,9 +1,10 @@
 import Foundation
+import UserNotifications
 
 #if canImport(AlarmKit)
 import AlarmKit
+#endif
 
-@available(iOS 26.0, *)
 enum RooAlarmDismissRetrigger {
   private static let idMapKey = "rooalarm.alarmkit.idmap"
   private static let soundMapKey = "rooalarm.alarmkit.soundmap"
@@ -48,66 +49,99 @@ enum RooAlarmDismissRetrigger {
     return map?[appAlarmId] ?? "Roo Alarm"
   }
 
-  static func schedule(appAlarmId: String, delaySeconds: Int = RooAlarmConfigurationFactory.dismissRetriggerSeconds) async -> Bool {
+  static func scheduleFallback(appAlarmId: String, delaySeconds: Int = 5) {
+    let center = UNUserNotificationCenter.current()
+    let content = UNMutableNotificationContent()
+    content.title = "⏰ ¡ALARMA ACTIVA!"
+    content.body = "¡Haz la foto para apagar la alarma!"
+    let soundName = soundId(for: appAlarmId) + ".mp3"
+    if #available(iOS 15.0, *) {
+      content.sound = UNNotificationSound.criticalSoundNamed(UNNotificationSoundName(rawValue: soundName), withAudioVolume: 1.0)
+      content.interruptionLevel = .critical
+    } else {
+      content.sound = UNNotificationSound.defaultCritical
+    }
+    content.userInfo = ["alarmId": appAlarmId, "source": "rooalarm"]
+    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(max(1, delaySeconds)), repeats: false)
+    let request = UNNotificationRequest(identifier: "retrigger-\(appAlarmId)", content: content, trigger: trigger)
+    center.add(request, withCompletionHandler: nil)
+  }
+
+  static func schedule(appAlarmId: String, delaySeconds: Int = 1) async -> Bool {
     guard !appAlarmId.isEmpty, appAlarmId != "simulation" else { return false }
-    let manager = AlarmManager.shared
-    guard manager.authorizationState == .authorized else { return false }
 
-    let key = dismissKey(for: appAlarmId)
-    let uuid = alarmUUID(for: key)
-    try? manager.cancel(id: uuid)
+#if canImport(AlarmKit)
+    if #available(iOS 26.0, *) {
+      let manager = AlarmManager.shared
+      if manager.authorizationState == .authorized {
+        let key = dismissKey(for: appAlarmId)
+        let uuid = alarmUUID(for: key)
+        try? manager.cancel(id: uuid)
 
-    let delay = max(1, delaySeconds)
-    let title = title(for: appAlarmId)
-    let sound = soundId(for: appAlarmId)
-    let fireDate = Date().addingTimeInterval(TimeInterval(delay))
-    let configs: [AlarmManager.AlarmConfiguration<RooAlarmMetadata>] = [
-      RooAlarmConfigurationFactory.makeDelayedRetriggerOneShotConfiguration(
-        uuid: uuid,
-        title: title,
-        soundId: sound,
-        appAlarmId: appAlarmId,
-        delaySeconds: delay
-      ),
-      RooAlarmConfigurationFactory.makeDelayedRetriggerOneShotSimpleConfiguration(
-        uuid: uuid,
-        title: title,
-        soundId: sound,
-        delaySeconds: delay
-      ),
-      RooAlarmConfigurationFactory.makeDismissRetriggerConfiguration(
-        uuid: uuid,
-        title: title,
-        soundId: sound,
-        appAlarmId: appAlarmId,
-        fireDate: fireDate
-      ),
-      RooAlarmConfigurationFactory.makeDismissRetriggerCountdownConfiguration(
-        uuid: uuid,
-        title: title,
-        soundId: sound,
-        fireDate: fireDate
-      ),
-    ]
+        let delay = max(1, delaySeconds)
+        let title = title(for: appAlarmId)
+        let sound = soundId(for: appAlarmId)
+        let fireDate = Date().addingTimeInterval(TimeInterval(delay))
+        let configs: [AlarmManager.AlarmConfiguration<RooAlarmMetadata>] = [
+          RooAlarmConfigurationFactory.makeDelayedRetriggerOneShotConfiguration(
+            uuid: uuid,
+            title: title,
+            soundId: sound,
+            appAlarmId: appAlarmId,
+            delaySeconds: delay
+          ),
+          RooAlarmConfigurationFactory.makeDelayedRetriggerOneShotSimpleConfiguration(
+            uuid: uuid,
+            title: title,
+            soundId: sound,
+            delaySeconds: delay
+          ),
+          RooAlarmConfigurationFactory.makeDismissRetriggerConfiguration(
+            uuid: uuid,
+            title: title,
+            soundId: sound,
+            appAlarmId: appAlarmId,
+            fireDate: fireDate
+          ),
+          RooAlarmConfigurationFactory.makeDismissRetriggerCountdownConfiguration(
+            uuid: uuid,
+            title: title,
+            soundId: sound,
+            fireDate: fireDate
+          ),
+        ]
 
-    for config in configs {
-      do {
-        _ = try await manager.schedule(id: uuid, configuration: config)
-        NSLog("[RooAlarm] dismiss retrigger one-shot in %ds for %@", delay, appAlarmId)
-        return true
-      } catch {
-        NSLog("[RooAlarm] dismiss retrigger failed for %@: %@", appAlarmId, String(describing: error))
+        for config in configs {
+          do {
+            _ = try await manager.schedule(id: uuid, configuration: config)
+            NSLog("[RooAlarm] dismiss retrigger one-shot in %ds for %@", delay, appAlarmId)
+            return true
+          } catch {
+            NSLog("[RooAlarm] dismiss retrigger failed for %@: %@", appAlarmId, String(describing: error))
+          }
+        }
       }
     }
-    return false
+#endif
+
+    scheduleFallback(appAlarmId: appAlarmId, delaySeconds: delaySeconds)
+    return true
   }
 
   static func cancel(appAlarmId: String) async {
     guard !appAlarmId.isEmpty, appAlarmId != "simulation" else { return }
-    let key = dismissKey(for: appAlarmId)
-    let map = loadIdMap()
-    guard let existing = map[key], let uuid = UUID(uuidString: existing) else { return }
-    try? AlarmManager.shared.cancel(id: uuid)
+    let center = UNUserNotificationCenter.current()
+    center.removePendingNotificationRequests(withIdentifiers: ["retrigger-\(appAlarmId)"])
+
+#if canImport(AlarmKit)
+    if #available(iOS 26.0, *) {
+      let key = dismissKey(for: appAlarmId)
+      let map = loadIdMap()
+      if let existing = map[key], let uuid = UUID(uuidString: existing) {
+        try? AlarmManager.shared.cancel(id: uuid)
+      }
+    }
+#endif
   }
 }
-#endif
+

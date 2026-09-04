@@ -24,6 +24,7 @@ import {
 } from '../lib/alarmScheduler';
 import { wasAlarmCompletedToday } from '../lib/finalizeAlarmSuccess';
 import { markAlarmRetriggerPending } from '../lib/retriggerGuard';
+import { getActiveRingingAlarm, startPersistentAlarm } from '../lib/alarmPersistentGuard';
 
 const ALL_WEEK_DAYS = [0, 1, 2, 3, 4, 5, 6];
 
@@ -93,13 +94,17 @@ export function useGlobalAlarmTrigger(
       const dailyAlarm = getDailyAlarm(alarmsRef.current);
       const isDaily = dailyAlarm ? alarm.id === dailyAlarm.id : false;
 
-      await markAlarmTriggered(alarm, todayStr);
+      // Start audio immediately so user hears alarm as soon as they return to app,
+      // even before AlarmMission screen mounts and calls startPersistentAlarm itself.
+      void startPersistentAlarm(alarm);
 
       if (Platform.OS === 'ios') {
         navigateToAlarmMission(navigationRef, { isDaily, alarm });
       } else {
         navigateToAlarmUnlock(navigationRef, { isDaily, alarm });
       }
+
+      void markAlarmTriggered(alarm, todayStr);
     } finally {
       setTimeout(() => {
         firingRef.current = false;
@@ -184,13 +189,25 @@ export function useGlobalAlarmTrigger(
     await cancelDismissRetrigger(pendingId);
     await markAlarmTriggered(alarm, todayStr);
     markAlarmRetriggerPending(pendingId);
-    await retriggerManagedAlarm(alarm, { immediate: true });
-  }, [markAlarmTriggered, refreshAlarmData]);
+    await openAlarmForRecord(alarm);
+  }, [markAlarmTriggered, openAlarmForRecord, refreshAlarmData]);
 
   useEffect(() => {
     if (!enabled || !userId) return;
 
-    void refreshAlarmData().then(() => flushSlideRetrigger());
+    // Arranque (incluye cold-start tras swipe-kill): si hay una alarma que estaba
+    // sonando y su misión no se completó, forzamos la misión SIEMPRE. El listener
+    // de AppState solo dispara al cambiar a 'active', pero en cold-start la app ya
+    // está 'active', así que sin esto la restauración dependía del clock-match frágil.
+    void (async () => {
+      await refreshAlarmData();
+      const activeRinging = await getActiveRingingAlarm();
+      if (activeRinging) {
+        await openAlarmForRecord(activeRinging);
+        return;
+      }
+      await flushSlideRetrigger();
+    })();
 
     const refreshInterval = setInterval(() => {
       void refreshAlarmData();
@@ -201,14 +218,20 @@ export function useGlobalAlarmTrigger(
     // Reintenta leer el marcador del deslizar por si el intent nativo lo escribe con retraso.
     const slideFlushInterval = setInterval(() => {
       void flushSlideRetrigger();
-    }, 800);
+    }, 300);
 
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        void refreshAlarmData().then(() => {
+        void (async () => {
+          const activeRinging = await getActiveRingingAlarm();
+          if (activeRinging) {
+            await openAlarmForRecord(activeRinging);
+            return;
+          }
           checkDueAlarms();
           void flushSlideRetrigger();
-        });
+          void refreshAlarmData();
+        })();
       }
     });
 
@@ -244,5 +267,5 @@ export function useGlobalAlarmTrigger(
       receivedSub.remove();
       responseSub.remove();
     };
-  }, [checkDueAlarms, enabled, flushSlideRetrigger, openAlarmById, openSimulation, refreshAlarmData, userId]);
+  }, [checkDueAlarms, enabled, flushSlideRetrigger, openAlarmById, openAlarmForRecord, openSimulation, refreshAlarmData, userId]);
 }

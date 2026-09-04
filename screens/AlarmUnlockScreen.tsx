@@ -14,10 +14,12 @@ import SwipeBegin from '../components/SwipeBegin';
 import Icon from '../components/Icon';
 import { SOUND_ASSETS } from '../constants/sounds';
 import { configurePlaybackAudio, createRooAudioPlayer, RooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
+import { startPersistentAlarm } from '../lib/alarmPersistentGuard';
 import { getCurrentAlarmClockDisplay } from '../lib/alarmScheduler';
-import { navigationRef } from '../App';
-import { tryOpenPendingAlarmFlow } from '../lib/alarmMissionLaunch';
+import { isPersistentAlarmActive } from '../lib/alarmPersistentGuard';
 import { useAuth } from '../constants/AuthContext';
+
+// Early navigation effect moved inside component
 
 const { width } = Dimensions.get('window');
 const ORB_SIZE = Math.min(width * 0.72, 320);
@@ -40,17 +42,22 @@ export default function AlarmUnlockScreen({ navigation, route }: AlarmUnlockScre
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const timeScale = useRef(new Animated.Value(0.96)).current;
-  const soundRef = useRef<RooAudioPlayer | null>(null);
+
+  useEffect(() => {
+    void startPersistentAlarm(alarm);
+  }, [alarm]);
+
+  // If alarm is already ringing (app was backgrounded), navigate instantly to alarm mission
+  useEffect(() => {
+    if (Platform.OS !== 'ios' && isPersistentAlarmActive()) {
+      navigation.replace('AlarmMission', { isDaily, alarm, fromAlarmKit: false });
+    }
+  }, [alarm, isDaily, navigation]);
 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
-    void (async () => {
-      const opened = await tryOpenPendingAlarmFlow(navigationRef, user?.id);
-      if (!opened) {
-        navigation.replace('AlarmMission', { isDaily, alarm, fromAlarmKit: true });
-      }
-    })();
-  }, [alarm, isDaily, navigation, user?.id]);
+    navigation.replace('AlarmMission', { isDaily, alarm, fromAlarmKit: true });
+  }, [alarm, isDaily, navigation]);
 
   useEffect(() => {
     if (Platform.OS === 'ios') return;
@@ -59,44 +66,9 @@ export default function AlarmUnlockScreen({ navigation, route }: AlarmUnlockScre
       Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
       Animated.spring(timeScale, { toValue: 1, friction: 6, tension: 80, useNativeDriver: true }),
     ]).start();
-
-    let volumeInterval: NodeJS.Timeout;
-    async function playSound() {
-      try {
-        await configurePlaybackAudio(true);
-
-        const newSound = createRooAudioPlayer(SOUND_ASSETS[0].file, { loop: true, volume: 1.0 });
-        soundRef.current = newSound;
-        newSound.volume = 1.0;
-        newSound.play();
-
-        Vibration.vibrate([1000, 1000, 1000], true);
-      } catch (error) {
-        console.log('Error loading sound', error);
-      }
-    }
-    playSound();
-
-    return () => {
-      if (volumeInterval) clearInterval(volumeInterval);
-      Vibration.cancel();
-      stopRooAudioPlayer(soundRef.current);
-      soundRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', () => {
-      stopRooAudioPlayer(soundRef.current);
-      soundRef.current = null;
-    });
-    return unsubscribe;
-  }, [navigation]);
+  }, [fadeAnim, timeScale]);
 
   const handleComplete = async () => {
-    Vibration.cancel();
-    stopRooAudioPlayer(soundRef.current);
-    soundRef.current = null;
     navigation.navigate('AlarmMission', { isDaily, alarm });
   };
 

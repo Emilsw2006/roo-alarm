@@ -61,7 +61,9 @@ export default function OtherAlarmsSheet({ visible, alarms, onClose, onEdit, onT
                       <Text style={[styles.cardTime, { color: colors.text }]}>{al.time}</Text>
                     </View>
                     <Text style={[styles.cardLabel, { color: colors.textFaint }]}>
-                      {al.specificDate ? `${new Date(al.specificDate).getDate()} ${new Date(al.specificDate).toLocaleString('default', { month: 'short' })} • ` : ''}
+                      {al.specificDate && al.specificDate !== 'daily'
+                        ? `${new Date(al.specificDate).getDate()} ${new Date(al.specificDate).toLocaleString('default', { month: 'short' })} • `
+                        : `${t('sheets.dailyAlarm') || 'Diaria'} • `}
                       {al.label || al.mission}
                     </Text>
                   </View>

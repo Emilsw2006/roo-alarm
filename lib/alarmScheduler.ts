@@ -298,8 +298,8 @@ export const configureAlarmNotifications = async () => {
       const isAlarm = !!data?.alarmId || data?.source === 'rooalarm' || data?.source === 'simulation';
       if (isAlarm) {
         return {
-          shouldShowBanner: true,
-          shouldShowList: true,
+          shouldShowBanner: false,
+          shouldShowList: false,
           shouldPlaySound: true,
           shouldSetBadge: false,
         };

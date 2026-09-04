@@ -4,6 +4,7 @@ import { mapAlarmFromSupabase, navigateToAlarmMission } from './alarmNavigation'
 import { capturePendingAlarmLaunch, clearPendingAlarmLaunch } from './alarmScheduler';
 import { wasAlarmCompletedToday } from './finalizeAlarmSuccess';
 import { shouldBlockAlarmKitRelaunch } from './missionTimeout';
+import { startPersistentAlarm } from './alarmPersistentGuard';
 
 async function markAlarmTriggeredToday(alarmId: number, userId: string) {
   const todayStr = new Date().toISOString().split('T')[0];
@@ -17,15 +18,6 @@ export async function openAlarmFlowFromPendingId(
 ): Promise<boolean> {
   if (!navigationRef.isReady()) {
     console.log('[RooAlarm] openAlarmFlow: navigationRef not ready, pendingId=', pendingId);
-    return false;
-  }
-  if (shouldBlockAlarmKitRelaunch(navigationRef)) {
-    console.log(
-      '[RooAlarm] openAlarmFlow: BLOCKED, currently on route',
-      navigationRef.getCurrentRoute()?.name,
-      'pendingId=',
-      pendingId
-    );
     return false;
   }
 
@@ -79,6 +71,7 @@ export async function openAlarmFlowFromPendingId(
 
   await markAlarmTriggeredToday(alarm.id, userId);
 
+  void startPersistentAlarm(alarm);
   const opened = navigateToAlarmMission(navigationRef, { isDaily, alarm, fromAlarmKit: true });
   console.log('[RooAlarm] openAlarmFlow: navigateToAlarmMission result=', opened, 'alarmId=', alarmId, 'isDaily=', isDaily);
   if (opened) await clearPendingAlarmLaunch();

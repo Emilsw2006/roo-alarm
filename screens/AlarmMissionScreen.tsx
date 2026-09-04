@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Dimensions, Image, Platform } from 'react-native';
+import { View, Text, StyleSheet, Animated, Dimensions, Image, Platform, AppState } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
@@ -21,6 +21,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../constants/AuthContext';
 import { useColors } from '../constants/ThemeContext';
 import { configurePlaybackAudio, createRooAudioPlayer, RooAudioPlayer, stopRooAudioPlayer } from '../lib/audioPlayer';
+import { startPersistentAlarm, stopPersistentAlarm } from '../lib/alarmPersistentGuard';
 import { finishMissionTimeout, onMissionTimerExpired } from '../lib/missionTimeout';
 import { finalizeAlarmSuccess } from '../lib/finalizeAlarmSuccess';
 import { cancelDismissRetrigger } from '../lib/alarmScheduler';
@@ -66,6 +67,8 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
   const r = size / 2 - 16;
   const c = 2 * Math.PI * r;
 
+  const lastTickTimeRef = useRef(Date.now());
+
   useEffect(() => {
     if (fromAlarmKit && alarm?.id && Platform.OS === 'ios') {
       void cancelDismissRetrigger(alarm.id);
@@ -73,22 +76,53 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
   }, [fromAlarmKit, alarm?.id]);
 
   useEffect(() => {
+    void startPersistentAlarm(alarm);
     Animated.timing(fadeAnim, { toValue: 1, duration: 360, useNativeDriver: true }).start();
     resolveMission();
 
+    lastTickTimeRef.current = Date.now();
+
     intervalRef.current = setInterval(() => {
-      const next = Math.max(0, Math.ceil((expiresAtRef.current - Date.now()) / 1000));
+      const now = Date.now();
+      const timeSinceLastTick = now - lastTickTimeRef.current;
+      lastTickTimeRef.current = now;
+
+      // Detect background suspension (gap > 2.5s between ticks)
+      if (timeSinceLastTick > 2500) {
+        expiresAtRef.current = now + TOTAL * 1000;
+        timeoutHandledRef.current = false;
+        setSeconds(TOTAL);
+        void startPersistentAlarm(alarm);
+        return;
+      }
+
+      if (AppState.currentState !== 'active') return;
+
+      const next = Math.max(0, Math.ceil((expiresAtRef.current - now) / 1000));
       setSeconds(next);
     }, 250);
+
+    // When returning from background/unlock, reset the timer to full 60s
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        expiresAtRef.current = Date.now() + TOTAL * 1000;
+        timeoutHandledRef.current = false;
+        lastTickTimeRef.current = Date.now();
+        setSeconds(TOTAL);
+        void startPersistentAlarm(alarm);
+      }
+    });
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       stopRooAudioPlayer(tickSoundRef.current);
+      appStateSub.remove();
     };
-  }, []);
+  }, [alarm]);
 
   useEffect(() => {
     if (seconds !== 0 || timeoutHandledRef.current) return;
+    if (AppState.currentState !== 'active') return;
     if (intervalRef.current) clearInterval(intervalRef.current);
 
     void (async () => {
@@ -122,6 +156,9 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
   };
 
   const handleRepeatAlarm = () => {
+    // La alarma ya se re-programó en onMissionTimerExpired; conservamos la
+    // referencia para reabrir la misión cuando vuelva a sonar.
+    stopPersistentAlarm({ preserveActiveAlarm: true });
     setShowRescuePrompt(false);
     timeoutHandledRef.current = true;
     void finishMissionTimeout(navigation, { isDaily, alarm }, user?.id, { skipRetrigger: true });
@@ -260,6 +297,10 @@ export default function AlarmMissionScreen({ navigation, route }: AlarmMissionSc
 
   const handleContinue = async () => {
     setContinuePressed(true);
+    // DESBLOCAR: silenciamos el audio para hacer la foto en silencio, pero
+    // conservamos la referencia de la alarma. Solo finalizeAlarmSuccess la borra:
+    // si expiran los 60s y vuelve a sonar, la app debe poder reabrir la misión.
+    stopPersistentAlarm({ preserveActiveAlarm: true });
     if (missionMode === 'roulette') {
       if (!permission?.granted) {
         await requestPermission();

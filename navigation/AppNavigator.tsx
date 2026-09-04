@@ -44,10 +44,10 @@ const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const MainStack = createNativeStackNavigator<MainStackParamList>();
 
 function AuthNavigator({
-  initialRoute = 'Onboarding',
+  initialRoute = 'Login',
   initialStep = 1,
 }: {
-  initialRoute?: keyof Pick<AuthStackParamList, 'Onboarding'>;
+  initialRoute?: keyof AuthStackParamList;
   initialStep?: number;
 }) {
   return (
@@ -59,12 +59,12 @@ function AuthNavigator({
         contentStyle: { backgroundColor: 'transparent' },
       }}
     >
+      <AuthStack.Screen name="Login" component={LoginScreen} />
       <AuthStack.Screen
         name="Onboarding"
         component={OnboardingScreen}
         initialParams={{ initialStep }}
       />
-      <AuthStack.Screen name="Login" component={LoginScreen} />
       <AuthStack.Screen name="SignUp" component={SignUpScreen} />
       <AuthStack.Screen
         name="ForgotPassword"

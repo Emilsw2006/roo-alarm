@@ -20,23 +20,23 @@ type VerifyResult = {
 
 const MISSION_OBJECT_GUIDANCE: Record<string, string> = {
   make_bed:
-    "Category: bed/bedding. Any bed, mattress, sheets, duvet, or pillows — any color, angle, or messiness.",
+    "Category: bed/bedding. Must clearly show a bed, mattress with sheets/duvet, or pillow arrangement. The bed must be the main subject.",
   water:
-    "Category: drinkware/water. Any glass, cup, mug, bottle, jar, or tap/faucet.",
-  toothbrush: "Category: toothbrush. Manual or electric; partial visibility OK.",
-  sun_photo: "Category: sunlight. Sun rays, bright light on wall/floor/window, or the sun.",
-  sky_photo: "Category: sky. Through window, balcony, or outdoors; even a tiny patch counts.",
+    "Category: drinkware with water. A glass, cup, mug, bottle, or similar container — must be clearly visible and identifiable as the main subject.",
+  toothbrush: "Category: toothbrush. A manual or electric toothbrush must be clearly visible as the main subject.",
+  sun_photo: "Category: sunlight. Must clearly show sunlight: the sun itself, strong light rays, or bright sunlit area. Dark photos fail.",
+  sky_photo: "Category: sky. Must clearly show sky (blue, cloudy, or night). Through window is OK as long as sky is clearly visible.",
   doorway:
-    "Category: door/doorway. ANY door type, color, angle, or perspective.",
-  mug: "Category: mug/cup. Any mug, cup, taza, or similar drinkware.",
-  towel: "Category: towel. Any towel, hand towel, or bath towel.",
-  shoes: "Category: footwear. Shoes, sneakers, boots, slippers, sandals.",
-  keys: "Category: keys. Keys or keyring; partial visibility OK.",
-  book: "Category: book/reading material. Book, notebook, journal, or magazine.",
-  touch_grass: "Category: outdoor greenery. Grass, lawn, leaves, or plants outside.",
-  plant: "Category: plant. Houseplant, pot, flowers, or visible greenery.",
-  pet: "Category: pet. Dog, cat, bird, etc.",
-  random_object: "Category: any household object. One clear real object in frame.",
+    "Category: door or doorway. A door must be clearly visible as the main subject — any type, color, or material.",
+  mug: "Category: mug or cup. A mug or cup must be clearly visible and identifiable as the main subject.",
+  towel: "Category: towel. A towel must be clearly visible as the main subject.",
+  shoes: "Category: footwear. Shoes, sneakers, boots, slippers, or sandals must be clearly visible as the main subject.",
+  keys: "Category: keys. Keys or a keyring must be clearly visible and identifiable as the main subject.",
+  book: "Category: book or reading material. A book, notebook, journal, or magazine must be clearly the main subject.",
+  touch_grass: "Category: outdoor greenery. Must clearly show grass, lawn, leaves, or plants outdoors. Indoor plants do not count.",
+  plant: "Category: plant. A houseplant, pot, or flowers must be clearly the main subject.",
+  pet: "Category: pet animal. A dog, cat, bird, or other pet must be clearly visible and identifiable.",
+  random_object: "Category: any single household object. One clear, recognizable real-world object must be the main subject of the photo.",
 };
 
 function missionObjectGuidance(missionId: string, missionLabel: string): string {
@@ -100,16 +100,24 @@ Deno.serve(async (req) => {
   const prompt = [
     "You verify wake-up mission photos for a mobile alarm app.",
     'Return ONLY valid JSON: {"passed": boolean, "reason": string}',
-    "Match the OBJECT CATEGORY, never the exact app icon/emoji appearance.",
-    "Be LENIENT: blurry, dark, tilted, cropped photos are fine.",
-    "passed=true if there is ANY plausible evidence of the requested category.",
-    "passed=false ONLY when clearly unrelated or blank/black.",
-    'In "reason", act like friendly mascot "Roo" in Spanish, under 2 sentences.',
+    "",
+    "RULES:",
+    "1. passed=true ONLY if the photo CLEARLY and RECOGNIZABLY shows the requested object or category.",
+    "2. The object must be the MAIN subject of the photo, not barely visible or accidental.",
+    "3. passed=false if:",
+    "   - The photo shows something clearly different from what was asked.",
+    "   - The photo is completely black, blank, or the camera is covered.",
+    "   - The object is so blurry or far away that you cannot identify it with confidence.",
+    "   - The user is photographing something random that has nothing to do with the mission.",
+    "4. Be fair but STRICT. A photo of grass does NOT pass for 'make bed'. A selfie does NOT pass for 'glass of water'.",
+    "5. Reasonable variation IS allowed: different colors, angles, lighting conditions, partial visibility — as long as the object is clearly identifiable.",
+    'In "reason", respond as friendly mascot "Roo" in Spanish. If passed=false, clearly but kindly explain what was wrong (under 2 sentences).',
+    "",
     `Mission id: ${input.missionId}`,
     `Mission label: ${input.missionLabel}`,
     `Camera hint: ${input.missionHint}`,
     emojiLine,
-    `Object check: ${objectGuidance}`,
+    `Object category to verify: ${objectGuidance}`,
   ]
     .filter(Boolean)
     .join("\n");

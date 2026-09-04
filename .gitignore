@@ -57,3 +57,6 @@ App design.zip
 
 # Supabase CLI temp
 supabase/.temp/
+
+# Xcode local build cache
+build_output/

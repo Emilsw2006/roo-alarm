@@ -8,7 +8,7 @@ import SwiftUI
 enum RooAlarmConfigurationFactory {
   static let rooRed = Color(red: 231 / 255, green: 71 / 255, blue: 60 / 255)
   /// Seconds before the alarm rings again after slide dismiss or 60s mission timeout.
-  static let dismissRetriggerSeconds = 30
+  static let dismissRetriggerSeconds = 1
 
   static let unlockButton = AlarmButton(
     text: "Desbloquear",

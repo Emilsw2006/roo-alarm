@@ -9,8 +9,8 @@ import AppIntents
 public struct RooAlarmSlideDismissIntent: LiveActivityIntent {
   public static var title: LocalizedStringResource = "Posponer alarma"
   public static var description = IntentDescription("Vuelve a sonar la alarma si no completas la misión")
-  public static var openAppWhenRun: Bool { true }
-  public static var supportedModes: IntentModes { .foreground(.immediate) }
+  public static var openAppWhenRun: Bool { false }
+  public static var supportedModes: IntentModes { .background }
 
   @Parameter(title: "alarmKitID")
   public var alarmKitID: String

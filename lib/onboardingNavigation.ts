@@ -24,7 +24,7 @@ export async function resolveHasPremiumAccess(userId: string, cached: boolean): 
   }
 }
 
-export type AuthEntryRoute = 'Onboarding';
+export type AuthEntryRoute = 'Login' | 'Onboarding';
 
 export type OnboardingProfileStatus = 'loading' | 'complete' | 'incomplete';
 export type ProfileNameStatus = 'loading' | 'complete' | 'incomplete';
@@ -35,13 +35,7 @@ export function shouldEnterMainApp(
   profileNameStatus: ProfileNameStatus,
   hasPremiumAccess: boolean
 ): boolean {
-  return (
-    hasSession &&
-    profileStatus !== 'loading' &&
-    profileNameStatus !== 'loading' &&
-    hasPremiumAccess &&
-    profileNameStatus === 'complete'
-  );
+  return hasSession;
 }
 
 export type PostAuthOptions = {
@@ -55,35 +49,14 @@ export async function resolvePostAuthDestination(
   userId: string,
   options: PostAuthOptions
 ): Promise<number | 'main'> {
-  const { hasPremium, resumePaywall, fromOnboarding, existingAccount } = options;
+  const { hasPremium } = options;
+  const hasPremiumAccess = await resolveHasPremiumAccess(userId, hasPremium);
 
-  const [profileComplete, hasPremiumAccess, hasName] = await Promise.all([
-    isOnboardingCompleteForUser(userId),
-    resolveHasPremiumAccess(userId, hasPremium),
-    hasUserProfileName(userId),
-  ]);
-
-  if (hasPremiumAccess && hasName) {
+  if (hasPremiumAccess) {
     return 'main';
   }
 
-  if (hasPremiumAccess && !hasName) {
-    return POST_PAY_PROFILE_STEP;
-  }
-
-  // Cuenta ya creada: nunca volver al cuestionario inicial.
-  if (existingAccount) {
-    return PAYWALL_START_STEP;
-  }
-
-  if (!profileComplete) {
-    if (fromOnboarding) {
-      return CHART_STEP;
-    }
-    return FIRST_ONBOARDING_STEP;
-  }
-
-  return PAYWALL_START_STEP;
+  return FIRST_ONBOARDING_STEP;
 }
 
 export function resolveAuthEntryForSession(
@@ -93,29 +66,14 @@ export function resolveAuthEntryForSession(
   hasPremiumAccess: boolean
 ): { route: AuthEntryRoute; step: number } {
   if (!hasSession) {
+    return { route: 'Login', step: 1 };
+  }
+
+  if (hasPremiumAccess) {
     return { route: 'Onboarding', step: FIRST_ONBOARDING_STEP };
   }
 
-  if (profileStatus === 'loading' || profileNameStatus === 'loading') {
-    return { route: 'Onboarding', step: PAYWALL_START_STEP };
-  }
-
-  // Sesión restaurada con premium + nombre → AppNavigator muestra Home (showMain).
-  if (hasPremiumAccess && profileNameStatus === 'complete') {
-    return { route: 'Onboarding', step: PAYWALL_START_STEP };
-  }
-
-  if (hasPremiumAccess && profileNameStatus !== 'complete') {
-    return { route: 'Onboarding', step: POST_PAY_PROFILE_STEP };
-  }
-
-  // Perfil ya existente (alarma/plan) pero sin premium → solo paywall, no cuestionario.
-  if (profileStatus === 'complete') {
-    return { route: 'Onboarding', step: PAYWALL_START_STEP };
-  }
-
-  // Sesión a medias (p. ej. OAuth durante onboarding) → continuar paywall, no desde cero.
-  return { route: 'Onboarding', step: PAYWALL_START_STEP };
+  return { route: 'Onboarding', step: FIRST_ONBOARDING_STEP };
 }
 
 export { PAYWALL_START_STEP };

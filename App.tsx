@@ -31,6 +31,8 @@ LogBox.ignoreLogs([
   '[expo-av]: Expo AV has been deprecated',
   'Error configuring Purchases',
   '[RevenueCat]',
+  'Network request failed',
+  'TypeError: Network request failed',
 ]);
 
 const originalWarn = console.warn;
@@ -41,12 +43,13 @@ console.warn = (...args) => {
 
 const originalError = console.error;
 console.error = (...args) => {
-  const first = typeof args[0] === 'string' ? args[0] : '';
+  const first = typeof args[0] === 'string' ? args[0] : (args[0]?.message ?? '');
   if (
     first.includes('VirtualizedLists') ||
     first.includes('Error configuring Purchases') ||
     first.includes('Invalid API key') ||
-    first.includes('[RevenueCat]')
+    first.includes('[RevenueCat]') ||
+    first.includes('Network request failed')
   ) {
     return;
   }
@@ -153,13 +156,6 @@ function AlarmKitLaunchBridge() {
 }
 
 export default function App() {
-  useEffect(() => {
-    configureAlarmNotifications().catch(() => {});
-    if (Platform.OS === 'ios') {
-      capturePendingAlarmLaunch().catch(() => {});
-    }
-  }, []);
-
   const [fontsLoaded] = useFonts({
     Nunito_400Regular,
     Nunito_500Medium,
@@ -170,6 +166,13 @@ export default function App() {
   });
 
   const [fontsReady, setFontsReady] = useState(false);
+
+  useEffect(() => {
+    configureAlarmNotifications().catch(() => {});
+    if (Platform.OS === 'ios') {
+      capturePendingAlarmLaunch().catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     if (fontsLoaded) {

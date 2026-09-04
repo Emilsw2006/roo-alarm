@@ -43,7 +43,7 @@ const parseAlarmTime24 = (alarm: Alarm) => {
 
 export const buildAlarmFireDate = (alarm: Alarm): Date | null => {
   const { hour, minute } = parseAlarmTime24(alarm);
-  const base = alarm.specificDate ? new Date(alarm.specificDate) : new Date();
+  const base = alarm.specificDate && alarm.specificDate !== 'daily' ? new Date(alarm.specificDate) : new Date();
   if (Number.isNaN(base.getTime())) return null;
   const fire = new Date(base);
   fire.setHours(hour, minute, 0, 0);
@@ -80,7 +80,7 @@ export const resolveFireDateForScheduling = (alarm: Alarm): Date | null => {
 /** Next upcoming fire time for recurring or one-shot alarms. */
 export const getNextAlarmFireDate = (alarm: Alarm, protectedDays?: number[]): Date | null => {
   if (!alarm.on) return null;
-  if (alarm.specificDate) return resolveFireDateForScheduling(alarm);
+  if (alarm.specificDate && alarm.specificDate !== 'daily') return resolveFireDateForScheduling(alarm);
 
   const { hour, minute } = parseAlarmTime24(alarm);
   const activeDays = normalizeProtectedDays(protectedDays);
@@ -104,6 +104,7 @@ const isSameCalendarDay = (a: Date, b: Date) =>
 
 export const isOtherAlarmScheduledForDay = (alarm: Alarm, day: Date) => {
   if (!alarm.specificDate) return false;
+  if (alarm.specificDate === 'daily') return true;
   const fire = buildAlarmFireDate(alarm);
   return fire ? isSameCalendarDay(fire, day) : false;
 };
@@ -187,32 +188,12 @@ export const navigateToAlarmMission = (
   params: { isDaily: boolean; alarm?: Alarm; fromAlarmKit?: boolean }
 ) => {
   if (!navigationRef.isReady()) return false;
-  const routeName = navigationRef.getCurrentRoute()?.name;
-  if (routeName === 'AlarmMission' || routeName === 'Camera') {
-    console.log('[RooAlarm] navigateToAlarmMission: already on', routeName, '- skipping navigation');
-    return false;
-  }
 
-  if (params.fromAlarmKit) {
-    navigationRef.dispatch(
-      CommonActions.reset({
-        index: 0,
-        routes: [{ name: 'AlarmMission', params }],
-      })
-    );
-    return true;
-  }
-
-  if (Platform.OS === 'ios') {
-    navigationRef.dispatch(
-      CommonActions.reset({
-        index: 0,
-        routes: [{ name: 'AlarmMission', params }],
-      })
-    );
-    return true;
-  }
-
-  navigationRef.navigate('AlarmMission', params);
+  navigationRef.dispatch(
+    CommonActions.reset({
+      index: 0,
+      routes: [{ name: 'AlarmMission', params: { ...params, resetKey: Date.now() } }],
+    })
+  );
   return true;
 };

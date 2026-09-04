@@ -16,7 +16,10 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "RooAlarm usa la cámara solo para validar misiones de despertar, como hacer una foto del cielo o de un objeto elegido.",
-        "NSAlarmKitUsageDescription": "RooAlarm usa alarmas del sistema para despertarte a la hora exacta y ejecutar tu misión."
+        "NSAlarmKitUsageDescription": "RooAlarm usa alarmas del sistema para despertarte a la hora exacta y ejecutar tu misión.",
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
